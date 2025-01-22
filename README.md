@@ -126,8 +126,6 @@ Options:
 - `--name`: (Optional) The name of the new project
 - `--internal-name`: (Optional) The internal name used for configuration files
 - `--description`: (Optional) The project description
-- `--organization`: (Optional) The organization ID to use
-- `--no-git-check`: (Optional) Skip git repository check
 
 The template mode is particularly useful when you want to create multiple projects with similar configurations, as it will copy over settings like:
 - Include/exclude patterns
@@ -137,11 +135,32 @@ The template mode is particularly useful when you want to create multiple projec
 When using template mode, the command will create:
 - A new project on Claude.ai
 - The following files in your `.claudesync` directory (if they don't already exist):
-   - `internal_name.project.json` - contains the description of the project and the context (copied from template)
+   - `internal_name.project.json` - contains the project configuration:
+      - Project name (from `--name` if provided, otherwise from template)
+      - Project description (from `--description` if provided, otherwise from template)
+      - Include/exclude patterns (from template)
+      - Push roots configuration (from template)
+      - Ignore file settings (from template)
    - `internal_name.project_id.json` - contains the ID of the new project on Claude.ai
-   - Both files will use the internal name specified by `--internal-name` or prompted for
-- The configuration from the template's `.project.json` file will be copied to the new project's configuration, with the new project name and description
+   - Both files will use the internal name determined by this precedence:
+   1. Command line option `--internal-name` if provided
+   2. `internal_name` field from the template's project configuration if present
+   3. Default value 'all' for the first project
 
+The command line options take precedence over values from the template, allowing you to override specific fields while keeping the rest of the template configuration.
+
+Example template configuration file (`.claudesync/existing-project.project.json`):
+```json
+{
+    "project_name": "My Project Template",
+    "project_description": "Template for new projects",
+    "internal_name": "new-project",
+    "includes": ["src/**/*"],
+    "excludes": ["**/*.test.js"],
+    "use_ignore_files": true,
+    "push_roots": ["src/", "docs/"]
+}
+```
 ## Synchronization Configuration
 
 ### .claudeignore

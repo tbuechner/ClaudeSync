@@ -95,7 +95,7 @@ def create(ctx, template, name, internal_name, description, organization, no_git
 
             # Extract required fields
             name = name or template_config.get('project_name')
-            internal_name = internal_name or get_default_internal_name()
+            internal_name = internal_name or template_config.get('internal_name') or get_default_internal_name()
             # Description is optional, default to standard description if not provided
             description = description or template_config.get('project_description', "Project created with ClaudeSync")
 
@@ -149,6 +149,7 @@ def create(ctx, template, name, internal_name, description, organization, no_git
             # Use configuration from template
             project_config = {
                 "project_name": new_project["name"],
+                "internal_name": internal_name,
                 "project_description": description,
                 "includes": template_config.get('includes', []),
                 "excludes": template_config.get('excludes', []),
@@ -159,6 +160,7 @@ def create(ctx, template, name, internal_name, description, organization, no_git
             # Use default configuration
             project_config = {
                 "project_name": new_project["name"],
+                "internal_name": internal_name,
                 "project_description": description,
                 "includes": [],
                 "excludes": [],
