@@ -95,12 +95,13 @@ def create(ctx, template, name, internal_name, description, organization, no_git
 
             # Extract required fields
             name = name or template_config.get('project_name')
-            internal_name = internal_name or get_default_internal_name()
+            # Use internal_name from command line option if provided, otherwise use template name
+            internal_name = internal_name or template
             # Description is optional, default to standard description if not provided
             description = description or template_config.get('project_description', "Project created with ClaudeSync")
 
-            if not all([name, internal_name]):
-                raise ConfigurationError("Template must contain 'project_name' and 'internal_name' fields")
+            if not name:
+                raise ConfigurationError("Template must contain 'project_name' field")
 
         except json.JSONDecodeError as e:
             raise ConfigurationError(f"Invalid JSON in template file: {str(e)}")

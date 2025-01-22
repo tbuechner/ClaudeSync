@@ -70,6 +70,10 @@ Note: The ssh key must sit at the default location `~/.ssh/id_ed25519`.
 ## Project Setup
 
 1. Create a new project:
+
+There are two ways to create a project:
+
+a) Interactive Mode (Default):
 ```bash
 claudesync project create
 ```
@@ -93,8 +97,7 @@ Project created and set as active:
   - Remote URL: https://claude.ai/project/1dfc27c5-971a-4046-b922-a833db7ef7cc
 ```
 
-
-2. The command will create:
+When using interactive mode, the command will create:
    - A new project on Claude.ai
    - A `.claudesync` directory in your project folder - if it doesn't already exist
    - Two local configuration files:
@@ -110,6 +113,32 @@ The `internal_name_of_the_project.project_id.json` file is intended to be kept p
 .claudesync/*.project_id.json
 .claudesync/active_project.json
 ```
+
+b) Template Mode:
+```bash
+claudesync project create --template existing-project [--name NAME] [--internal-name NAME] [--description DESC]
+```
+
+Template mode allows you to create a new project using an existing project's configuration as a template. This is particularly useful when you have project configuration files already checked into version control and want to ensure consistent configuration across team members.
+
+Options:
+- `--template`: Name of an existing project to use as template (e.g., 'myproject' will use `.claudesync/myproject.project.json`)
+- `--name`: (Optional) The name of the new project. If not provided, uses the name from the template
+- `--internal-name`: (Optional) The internal name used for configuration files. If not provided, uses the template name
+- `--description`: (Optional) The project description
+
+The template mode is particularly useful when you want to create multiple projects with similar configurations, as it will copy over settings like:
+- Include/exclude patterns
+- Push roots configuration
+- Ignore file settings
+
+When using template mode, the command will create:
+- A new project on Claude.ai
+- The following files in your `.claudesync` directory (if they don't already exist):
+   - `internal_name.project.json` - contains the description of the project and the context (copied from template)
+   - `internal_name.project_id.json` - contains the ID of the new project on Claude.ai
+   - Both files will use the internal name specified by `--internal-name` or the template name if not provided
+- The configuration from the template's `.project.json` file will be copied to the new project's configuration, with the new project name and description
 
 ## Synchronization Configuration
 
