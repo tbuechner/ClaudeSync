@@ -199,9 +199,18 @@ def should_skip_directory(dir_path: str, base_path: str, gitignore, claudeignore
 
     return False
 
-def get_local_files(config, root_path, files_config):
+def get_local_files(config, root_path, files_config, include_references=True):
     """
     Get local files matching the patterns in files configuration with optimized directory traversal.
+    
+    Args:
+        config: Configuration manager instance
+        root_path: Root path to start file collection from
+        files_config: Files configuration dictionary
+        include_references: Whether to include files from referenced projects
+        
+    Returns:
+        Dict[str, str]: Dictionary mapping file paths to their hashes
     """
     use_ignore_files = files_config.get("use_ignore_files", True)
     gitignore = load_gitignore(root_path) if use_ignore_files else None
@@ -271,6 +280,16 @@ def get_local_files(config, root_path, files_config):
     traversal_time = time_module.time() - traversal_start
     logger.debug(f"File system traversal completed in {traversal_time:.2f} seconds")
     logger.debug(f"Found {len(files)} files to sync")
+
+    if include_references and hasattr(config, 'get_active_project'):
+        try:
+            from .project_reference_handler import ProjectReferenceHandler
+            active_project = config.get_active_project()[0]
+            if active_project:
+                reference_handler = ProjectReferenceHandler(config)
+                files = reference_handler.collect_referenced_files(active_project, files)
+        except Exception as e:
+            logger.warning(f"Error processing project references: {e}")
 
     return files
 

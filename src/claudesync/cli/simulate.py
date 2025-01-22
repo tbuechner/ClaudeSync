@@ -17,6 +17,7 @@ from ..exceptions import ConfigurationError
 from ..utils import get_local_files, load_gitignore, load_claudeignore
 from ..configmanager import FileConfigManager
 from typing import Dict, List, Optional, TypedDict
+from ..project_reference_handler import ProjectReferenceHandler
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -30,21 +31,20 @@ class TreeNode(TypedDict):
 
 def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files_config) -> dict:
     """
-    Build a hierarchical tree structure from the list of files with support for multiple roots.
+    Build a hierarchical tree structure from the list of files with support for references.
 
     Args:
         base_path: The root directory path
         files_to_sync: Dictionary of relative file paths and their hashes
         config: Configuration manager instance
+        files_config: Project files configuration
 
     Returns:
-        dict: Root node of the tree structure with support for multiple roots
+        dict: Root node of the tree structure
     """
-    logger = logging.getLogger(__name__)
+    logger.debug(f"Building file tree from {base_path}")
 
     use_ignore_files = files_config.get("use_ignore_files", True)
-
-    # Get sync filters
     gitignore = load_gitignore(base_path) if use_ignore_files else None
     claudeignore = load_claudeignore(base_path) if use_ignore_files else None
 
@@ -55,8 +55,7 @@ def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files
     }
 
     # Get push_roots from project config
-    project_config = config.get_files_config(config.get_active_project()[0])
-    push_roots = project_config.get('push_roots', [])
+    push_roots = files_config.get('push_roots', [])
 
     # Create a set of files that will be synced for quick lookup
     sync_files = set(files_to_sync.keys())
@@ -74,6 +73,36 @@ def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files
 
             # Process files under this root
             process_root(full_root_path, root_dir, root, sync_files, gitignore, claudeignore)
+
+    # Get referenced projects if any
+    try:
+        active_project = config.get_active_project()[0]
+        if active_project:
+            reference_handler = ProjectReferenceHandler(config)
+            references = reference_handler.get_project_references(active_project)
+            reference_paths = reference_handler.get_reference_paths(active_project)
+
+            # Add referenced files to tree
+            for ref in references:
+                ref_project = ref['project']
+                ref_path = reference_paths.get(ref_project)
+                if ref_path:
+                    try:
+                        ref_config = reference_handler._get_referenced_project_config(ref_path, ref_project)
+                        # Add reference node
+                        ref_node = {
+                            'name': f"[Reference] {ref_project}",
+                            'children': [],
+                            'isReference': True,
+                            'referenceProject': ref_project
+                        }
+                        root['children'].append(ref_node)
+                        process_root(ref_path, '', ref_node, sync_files, gitignore, claudeignore)
+                    except Exception as e:
+                        logger.warning(f"Error processing reference {ref_project}: {e}")
+
+    except Exception as e:
+        logger.warning(f"Error processing project references: {e}")
 
     return root
 
@@ -306,11 +335,65 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         logger.debug(f"Handling GET request for path: {parsed_path.path}")
 
+        if parsed_path.path == '/api/sync-data':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_cors_headers()
+            self.end_headers()
+
+            try:
+                # Get base project information
+                local_path = self.config.get_project_root()
+                active_project = self.get_active_project()
+                files_config = self.config.get_files_config(active_project)
+
+                # Create reference handler
+                reference_handler = ProjectReferenceHandler(self.config)
+                references = reference_handler.get_project_references(active_project)
+                reference_paths = reference_handler.get_reference_paths(active_project)
+
+                # Get files including references
+                files_to_sync = get_local_files(self.config, local_path, files_config)
+
+                # Build stats for each referenced project
+                reference_stats = {}
+                for ref in references:
+                    ref_project = ref['project']
+                    ref_path = reference_paths.get(ref_project)
+                    if ref_path:
+                        try:
+                            ref_config = reference_handler._get_referenced_project_config(ref_path, ref_project)
+                            ref_files = get_local_files(self.config, ref_path, ref_config, include_references=False)
+                            ref_stats = self._get_stats(ref_path, ref_files)
+                            ref_stats['path'] = str(ref_path)
+                            reference_stats[ref_project] = ref_stats
+                        except Exception as e:
+                            logger.warning(f"Error getting stats for reference {ref_project}: {e}")
+
+                # Build response data
+                response_data = {
+                    'claudeignore': load_claudeignore_as_string(self.config),
+                    'project': files_config,
+                    'stats': self._get_stats(local_path, files_to_sync),
+                    'treemap': self._get_treemap(local_path, files_to_sync, self.config, files_config),
+                    'references': {
+                        'configs': references,
+                        'stats': reference_stats
+                    }
+                }
+
+                self.wfile.write(json.dumps(response_data).encode())
+            except Exception as e:
+                logger.error(f"Error processing sync data request: {str(e)}\n{traceback.format_exc()}")
+                self.wfile.write(json.dumps({'error': str(e)}).encode())
+            return
+
         if parsed_path.path.startswith('/api/file-content'):
             try:
                 # Parse the file path from query parameters
                 query_params = parse_qs(parsed_path.query)
                 file_path = query_params.get('path', [''])[0]
+                reference = query_params.get('reference', [''])[0]
 
                 if not file_path:
                     self._send_error_response(400, "Missing file path parameter")
@@ -318,6 +401,15 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 
                 # Get current config and project root
                 project_root = self.config.get_project_root()
+                active_project = self.get_active_project()
+
+                # Handle referenced project files
+                if reference:
+                    reference_handler = ProjectReferenceHandler(self.config)
+                    reference_paths = reference_handler.get_reference_paths(active_project)
+                    ref_path = reference_paths.get(reference)
+                    if ref_path:
+                        project_root = ref_path
 
                 # Validate the requested path is within project root for security
                 full_path = os.path.join(project_root, file_path)
@@ -341,7 +433,8 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({
                         'content': content,
-                        'path': file_path
+                        'path': file_path,
+                        'reference': reference
                     }).encode())
 
                 except UnicodeDecodeError:
@@ -351,58 +444,7 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 
             except Exception as e:
                 logger.error(f"Error processing file content request: {str(e)}\n{traceback.format_exc()}")
-                self.wfile.write(json.dumps({'error': str(e)}).encode())
-            return
-
-        if parsed_path.path == '/api/sync-data':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_cors_headers()
-            self.end_headers()
-
-            try:
-                local_path = self.config.get_project_root()
-                active_project = self.get_active_project()
-                files_config = self.config.get_files_config(active_project)
-
-                # Get files that would be synced based on project configuration
-                files_to_sync = get_local_files(self.config, local_path, files_config)
-
-                # Build response data
-                response_data = {
-                    'claudeignore': load_claudeignore_as_string(self.config),
-                    'project': files_config,
-                    'stats': self._get_stats(local_path, files_to_sync),
-                    'treemap': self._get_treemap(local_path, files_to_sync, self.config, files_config)
-                }
-
-                self.wfile.write(json.dumps(response_data).encode())
-            except Exception as e:
-                logger.error(f"Error processing sync data request: {str(e)}\n{traceback.format_exc()}")
-                self.wfile.write(json.dumps({'error': str(e)}).encode())
-            return
-
-        if parsed_path.path == '/api/projects':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_cors_headers()
-            self.end_headers()
-
-            try:
-                projects = self.config.get_projects()
-                active_project_path, active_project_id = self.config.get_active_project()
-
-                response = {
-                    'projects': [
-                        {'id': project_id, 'path': project_path}
-                        for project_path, project_id in projects.items()
-                    ],
-                    'activeProject': active_project_path
-                }
-
-                self.wfile.write(json.dumps(response).encode())
-            except Exception as e:
-                self.wfile.write(json.dumps({'error': str(e)}).encode())
+                self._send_error_response(500, str(e))
             return
 
         # For all other paths, serve static files
@@ -433,9 +475,14 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 @click.command()
 @click.option('--port', default=4201, help='Port to run the server on')
 @click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
+@click.option('--list', is_flag=True, help='Show simple list of files in console')
 @click.pass_obj
-def simulate_push(config, port, no_browser):
-    """Launch a visualization of files to be synchronized."""
+def simulate_push(config, port, no_browser, list):
+    """Launch a visualization of files to be synchronized or show file list."""
+    if list:
+        show_file_list(config)
+        return
+
     logger.debug("Starting simulate command")
 
     web_dir = os.path.join(os.path.dirname(__file__), '../web/dist/claudesync-simulate')
@@ -487,3 +534,60 @@ def simulate_push(config, port, no_browser):
         else:
             logger.error(f"Failed to start server: {e}")
             click.echo(f"Error: Failed to start server: {e}")
+
+def show_file_list(config):
+    """Show a simple list of files that would be pushed."""
+    try:
+        # Get active project
+        active_project_path, active_project_id = config.get_active_project()
+        if not active_project_path:
+            raise ConfigurationError("No active project found")
+
+        # Get project configurations
+        local_path = config.get_project_root()
+        files_config = config.get_files_config(active_project_path)
+
+        # Get main project files
+        main_files = get_local_files(config, local_path, files_config, include_references=False)
+
+        # Print main project files
+        click.echo(f"\nFiles from main project ({active_project_path}):")
+        click.echo("=" * 50)
+        for file_path in sorted(main_files.keys()):
+            click.echo(f"  {file_path}")
+        click.echo(f"Total: {len(main_files)} files")
+
+        # Get and print referenced project files
+        reference_handler = ProjectReferenceHandler(config)
+        references = reference_handler.get_project_references(active_project_path)
+        reference_paths = reference_handler.get_reference_paths(active_project_path)
+
+        for ref in references:
+            ref_project = ref['project']
+            ref_path = reference_paths.get(ref_project)
+
+            if ref_path:
+                try:
+                    ref_config = reference_handler._get_referenced_project_config(ref_path, ref_project)
+
+                    # Add any additional excludes from the reference
+                    ref_excludes = ref_config.get('excludes', [])
+                    if 'excludes' in ref:
+                        ref_excludes.extend(ref['excludes'])
+                    ref_config['excludes'] = ref_excludes
+
+                    # Get files for this reference
+                    ref_files = get_local_files(config, ref_path, ref_config, include_references=False)
+
+                    # Print referenced project files
+                    click.echo(f"\nFiles from referenced project '{ref_project}':")
+                    click.echo("=" * 50)
+                    for file_path in sorted(ref_files.keys()):
+                        click.echo(f"  {file_path}")
+                    click.echo(f"Total: {len(ref_files)} files")
+
+                except Exception as e:
+                    click.echo(f"\nError processing reference '{ref_project}': {e}")
+
+    except Exception as e:
+        click.echo(f"Error: {str(e)}")
