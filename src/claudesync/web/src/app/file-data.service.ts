@@ -95,9 +95,19 @@ export class FileDataService {
 
   // File content is not cached as it's requested on-demand
   getFileContent(filePath: string): Observable<FileContentResponse> {
+    console.log(`Requesting file content for path: ${filePath}`);
     return this.http.get<FileContentResponse>(`${this.baseUrl}/file-content`, {
       params: { path: filePath }
-    });
+    }).pipe(
+      tap({
+        next: (response) => {
+          console.log('File content response:', response);
+        },
+        error: (error) => {
+          console.error('File content request error:', error);
+        }
+      })
+    );
   }
 
   getProjects(): Observable<Project[]> {
