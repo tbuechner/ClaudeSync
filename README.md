@@ -44,7 +44,7 @@ Make sure, that the virtual environment is added to your .gitignore file:
 2. Install ClaudeSync fork with _simulate-push_ feature using pip:
 
 ```bash
-pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-0.1.2-py3-none-any.whl   
+pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-0.1.2-py3-none-any.whl
 ```
 
 ## Authentication
@@ -64,7 +64,7 @@ Note: The ssh key must sit at the default location `~/.ssh/id_ed25519`.
    - Go to Application/Storage tab
    - Find the `sessionKey` cookie
    - Copy its value (starts with `sk-ant`)
-   - Paste it into the terminal when prompted
+   - Paste it into the terminal when prompted (nothing will be shown in the terminal but the key will be pasted)
    - Enter or confirm the expiration date
 
 ## Project Setup
@@ -83,7 +83,7 @@ You'll be prompted for:
 ❯ claudesync project create
 Enter a title for your new project [cplace-paw]: cplace-paw - Draggable Page List
 Enter the internal name for your project (used for config files) [all]: draggable-page-list
-Enter the project description [Project created with ClaudeSync]: 
+Enter the project description [Project created with ClaudeSync]:
 Project 'cplace-paw - Draggable Page List' (uuid: 1dfc27c5-971a-4046-b922-a833db7ef7cc) has been created successfully.
 
 Project created and set as active:
@@ -125,6 +125,11 @@ __pycache__/
 .env
 node_modules/
 .venv/
+.github/
+.gradle/
+.idea/
+build/
+gradle/
 ```
 
 The `.claudeignore` file is intended to be shared with other team members. It can (and should) be checked into version history. There is one version of the `.claudeignore` file per folder in which ClaudeSync is applied.
