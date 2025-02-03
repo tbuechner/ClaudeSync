@@ -17,10 +17,12 @@ from claudesync.utils import (
     validate_and_get_provider,
     get_local_files,
 )
+
+from ..utils import FileSource
 from .auth import auth
 from .organization import organization
 from .project import project
-from .simulate import simulate_push
+from .simulate import simulate_push, display_file_list
 from .config import config
 from .zip import zip
 from .tokens import tokens
@@ -56,10 +58,15 @@ def install_completion(shell):
 
 @cli.command()
 @click.argument("project", required=False)
+@click.option("--dry-run", is_flag=True, help="Show what would be pushed without pushing")
 @click.pass_obj
 @handle_errors
-def push(config, project):
-    """Synchronize the project files."""
+def push(config, project, dry_run):
+    """
+    Synchronize the project files, including referenced projects.
+
+    If no project is specified, uses the active project.
+    """
     if not project:
         # Use the active project if no project specified
         active_project_path, active_project_id = config.get_active_project()
@@ -69,6 +76,7 @@ def push(config, project):
 
     # Get configurations
     files_config = config.get_files_config(project)
+    project_root = config.get_project_root()
 
     provider = validate_and_get_provider(config)
 
@@ -77,19 +85,38 @@ def push(config, project):
     project_id = config.get_project_id(project)
 
     # Get files to sync using patterns from files configuration
-    local_files = get_local_files(config, config.get_project_root(), files_config)
+    local_files = get_local_files(config, project_root, files_config)
+
+    # If dry run, just show what would be pushed
+    if dry_run:
+        click.echo(f"\nDry run for project '{project}':")
+        display_file_list(local_files, config)
+        return
 
     # Set as active project
     config.set_active_project(project, project_id)
 
     # Sync files
     remote_files = provider.list_files(active_organization_id, project_id)
-    sync_manager = SyncManager(provider, config, project_id, config.get_project_root())
-    sync_manager.sync(local_files, remote_files)
+    sync_manager = SyncManager(provider, config, project_id, project_root)
+
+    # Perform the sync
+    try:
+        sync_manager.sync(local_files, remote_files)
+    except Exception as e:
+        raise click.ClickException(f"Sync failed: {str(e)}")
 
     click.echo(f"Project '{project}' synced successfully")
     click.echo(f"Remote URL: https://claude.ai/project/{project_id}")
 
+    # Display summary
+    main_count = sum(1 for f in local_files.values() if f.source == FileSource.MAIN)
+    ref_count = sum(1 for f in local_files.values() if f.source == FileSource.REFERENCED)
+
+    click.echo("\nSync Summary:")
+    click.echo(f"Main project files: {main_count}")
+    click.echo(f"Referenced project files: {ref_count}")
+    click.echo(f"Total files synced: {len(local_files)}")
 
 cli.add_command(auth)
 cli.add_command(organization)

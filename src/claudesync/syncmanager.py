@@ -4,12 +4,16 @@ import time
 import logging
 from datetime import datetime, timezone
 import io
+from typing import Dict
 
 from tqdm import tqdm
 
 from claudesync.utils import compute_md5_hash
 from claudesync.exceptions import ProviderError
+
+from .cli.simulate import get_root_path
 from .compression import compress_content, decompress_content
+from .utils import FileInfo
 
 logger = logging.getLogger(__name__)
 
@@ -55,32 +59,42 @@ class SyncManager:
         self.compression_algorithm = config.get("compression_algorithm", "none")
         self.synced_files = {}
 
-    def sync(self, local_files, remote_files):
+    def sync(self, local_files: Dict[str, FileInfo], remote_files):
         self.synced_files = {}  # Reset synced files at the start of sync
         if self.compression_algorithm == "none":
             self._sync_without_compression(local_files, remote_files)
         else:
             self._sync_with_compression(local_files, remote_files)
 
-    def _sync_without_compression(self, local_files, remote_files):
+    def _sync_without_compression(self, local_files: Dict[str, FileInfo], remote_files):
         remote_files_to_delete = set(rf["file_name"] for rf in remote_files)
         synced_files = set()
 
+        # Get reference paths for resolving file locations
+        active_project = self.config.get_active_project()[0]
+        reference_paths = self.config._get_reference_paths(active_project)
+
         with tqdm(total=len(local_files), desc="Local → Remote") as pbar:
-            for local_file, local_checksum in local_files.items():
+            for local_path, file_info in local_files.items():
                 remote_file = next(
-                    (rf for rf in remote_files if rf["file_name"] == local_file), None
+                    (rf for rf in remote_files if rf["file_name"] == local_path), None
                 )
                 if remote_file:
                     self.update_existing_file(
-                        local_file,
-                        local_checksum,
+                        local_path,
+                        file_info,
                         remote_file,
                         remote_files_to_delete,
                         synced_files,
+                        reference_paths
                     )
                 else:
-                    self.upload_new_file(local_file, synced_files)
+                    self.upload_new_file(
+                        local_path,
+                        file_info,
+                        synced_files,
+                        reference_paths
+                    )
                 pbar.update(1)
 
         self.update_local_timestamps(remote_files, synced_files)
@@ -89,7 +103,9 @@ class SyncManager:
             with tqdm(total=len(remote_files), desc="Local ← Remote") as pbar:
                 for remote_file in remote_files:
                     self.sync_remote_to_local(
-                        remote_file, remote_files_to_delete, synced_files
+                        remote_file,
+                        remote_files_to_delete,
+                        synced_files
                     )
                     pbar.update(1)
 
@@ -193,52 +209,71 @@ class SyncManager:
     @retry_on_403()
     def update_existing_file(
         self,
-        local_file,
-        local_checksum,
-        remote_file,
-        remote_files_to_delete,
-        synced_files,
+        local_path: str,
+        file_info: FileInfo,
+        remote_file: dict,
+        remote_files_to_delete: set,
+        synced_files: set,
+        reference_paths: Dict[str, str]
     ):
         remote_content = remote_file["content"]
         remote_checksum = compute_md5_hash(remote_content)
-        if local_checksum != remote_checksum:
-            logger.debug(f"Updating {local_file} on remote...")
-            with tqdm(total=2, desc=f"Updating {local_file}", leave=False) as pbar:
+
+        if file_info.hash != remote_checksum:
+            logger.debug(f"Updating {local_path} on remote...")
+            with tqdm(total=2, desc=f"Updating {local_path}", leave=False) as pbar:
                 self.provider.delete_file(
                     self.active_organization_id,
                     self.active_project_id,
                     remote_file["uuid"],
                 )
                 pbar.update(1)
-                with open(
-                    os.path.join(self.local_path, local_file), "r", encoding="utf-8"
-                ) as file:
+
+                # Get correct root path for file
+                root_path = get_root_path(file_info, self.config, reference_paths)
+                full_path = os.path.join(root_path, local_path)
+
+                with open(full_path, "r", encoding="utf-8") as file:
                     content = file.read()
                 self.provider.upload_file(
                     self.active_organization_id,
                     self.active_project_id,
-                    local_file,
+                    local_path,
                     content,
                 )
                 pbar.update(1)
             time.sleep(self.upload_delay)
-            synced_files.add(local_file)
-        remote_files_to_delete.remove(local_file)
+            synced_files.add(local_path)
+        remote_files_to_delete.remove(local_path)
 
     @retry_on_403()
-    def upload_new_file(self, local_file, synced_files):
-        logger.debug(f"Uploading new file {local_file} to remote...")
-        with open(
-            os.path.join(self.local_path, local_file), "r", encoding="utf-8"
-        ) as file:
+    def upload_new_file(
+        self,
+        local_path: str,
+        file_info: FileInfo,
+        synced_files: set,
+        reference_paths: Dict[str, str]
+    ):
+        logger.debug(f"Uploading new file {local_path} to remote...")
+
+        # Get correct root path for file
+        root_path = get_root_path(file_info, self.config, reference_paths)
+        full_path = os.path.join(root_path, local_path)
+
+        with open(full_path, "r", encoding="utf-8") as file:
             content = file.read()
-        with tqdm(total=1, desc=f"Uploading {local_file}", leave=False) as pbar:
+
+        with tqdm(total=1, desc=f"Uploading {local_path}", leave=False) as pbar:
             self.provider.upload_file(
-                self.active_organization_id, self.active_project_id, local_file, content
+                self.active_organization_id,
+                self.active_project_id,
+                local_path,
+                content
             )
             pbar.update(1)
+
         time.sleep(self.upload_delay)
-        synced_files.add(local_file)
+        synced_files.add(local_path)
 
     def update_local_timestamps(self, remote_files, synced_files):
         for remote_file in remote_files:
