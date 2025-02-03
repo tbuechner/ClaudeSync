@@ -3,6 +3,7 @@ import hashlib
 import time as time_module
 from functools import wraps
 from pathlib import Path
+from typing import Dict, Optional
 
 import click
 import pathspec
@@ -12,6 +13,230 @@ from claudesync.exceptions import ConfigurationError, ProviderError
 from claudesync.provider_factory import get_provider
 
 logger = logging.getLogger(__name__)
+
+class FileSource:
+    """Tracks the source of collected files."""
+    MAIN = "main"
+    REFERENCED = "referenced"
+
+class FileInfo:
+    """Information about a collected file."""
+    def __init__(self, path: str, hash: str, source: str, project_id: Optional[str] = None):
+        self.path = path
+        self.hash = hash
+        self.source = source
+        self.project_id = project_id
+
+def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, FileInfo]:
+    """
+    Get local files matching patterns in files configuration, including referenced projects.
+
+    Args:
+        config: Configuration manager instance
+        root_path: Root path of the main project
+        files_config: Files configuration dictionary
+
+    Returns:
+        Dict mapping file paths to FileInfo objects
+    """
+    logger.debug(f"Starting file collection from {root_path}")
+
+    # Collect files from main project
+    main_files = _collect_project_files(
+        config,
+        root_path,
+        files_config,
+        FileSource.MAIN
+    )
+    logger.debug(f"Collected {len(main_files)} files from main project")
+
+    # Get referenced projects
+    references = files_config.get('references', [])
+    if not references:
+        return main_files
+
+    # Get reference paths
+    try:
+        active_project = config.get_active_project()[0]
+        reference_paths = config._get_reference_paths(active_project)
+    except ConfigurationError:
+        logger.error("Failed to get reference paths")
+        return main_files
+
+    # Collect files from referenced projects
+    all_files = main_files.copy()
+    for ref_id in references:
+        if ref_id not in reference_paths:
+            logger.warning(f"No path found for referenced project {ref_id}")
+            continue
+
+        ref_config = config._load_referenced_project_config(ref_id, reference_paths)
+        if not ref_config:
+            logger.warning(f"Failed to load config for referenced project {ref_id}")
+            continue
+
+        # Get root path for referenced project
+        ref_path = Path(reference_paths[ref_id])
+        ref_root = ref_path.parent.parent  # Move up from .claudesync/config.json
+
+        # Collect files from referenced project
+        ref_files = _collect_project_files(
+            config,
+            str(ref_root),
+            ref_config,
+            FileSource.REFERENCED,
+            ref_id
+        )
+        logger.debug(f"Collected {len(ref_files)} files from referenced project {ref_id}")
+
+        # Handle duplicates (main project files take precedence)
+        for path, file_info in ref_files.items():
+            if path not in all_files:
+                all_files[path] = file_info
+            else:
+                logger.debug(f"Skipping duplicate file from reference: {path}")
+
+    logger.debug(f"Total files collected: {len(all_files)}")
+    return all_files
+
+def _collect_project_files(
+        config,
+        root_path: str,
+        files_config: dict,
+        source: str,
+        project_id: Optional[str] = None
+) -> Dict[str, FileInfo]:
+    """
+    Collect files from a single project (main or referenced).
+
+    Args:
+        config: Configuration manager instance
+        root_path: Root path of the project
+        files_config: Files configuration dictionary
+        source: Source identifier (main or referenced)
+        project_id: Optional project ID for referenced projects
+
+    Returns:
+        Dict mapping file paths to FileInfo objects
+    """
+    use_ignore_files = files_config.get("use_ignore_files", True)
+    gitignore = load_gitignore(root_path) if use_ignore_files else None
+    claudeignore = load_claudeignore(root_path) if use_ignore_files else None
+
+    files = {}
+    exclude_dirs = {".git", ".svn", ".hg", ".bzr", "_darcs", "CVS", "claude_chats", ".claudesync"}
+
+    # Get push_roots from configuration
+    push_roots = files_config.get("push_roots", [])
+    includes = files_config.get("includes", ["*"])
+    excludes = files_config.get("excludes", [])
+
+    category_excludes = None
+    if excludes:
+        category_excludes = pathspec.PathSpec.from_lines("gitwildmatch", excludes)
+
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
+
+    # Determine roots to traverse
+    roots_to_traverse = [os.path.join(root_path, root) for root in push_roots] if push_roots else [root_path]
+
+    for base_root in roots_to_traverse:
+        if not os.path.exists(base_root):
+            logger.warning(f"Specified root path does not exist: {base_root}")
+            continue
+
+        for root, dirs, filenames in os.walk(base_root, topdown=True):
+            # Filter out excluded directories
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            if use_ignore_files:
+                dirs[:] = [
+                    d for d in dirs
+                    if not should_skip_directory(
+                        os.path.join(root, d),
+                        root_path,
+                        gitignore,
+                        claudeignore,
+                        category_excludes
+                    )
+                ]
+
+            for filename in filenames:
+                rel_path = os.path.relpath(os.path.join(root, filename), root_path)
+
+                if spec.match_file(rel_path):
+                    full_path = os.path.join(root, filename)
+                    if should_process_file(
+                            config,
+                            full_path,
+                            filename,
+                            gitignore if use_ignore_files else None,
+                            root_path,
+                            claudeignore if use_ignore_files else None,
+                            category_excludes
+                    ):
+                        file_hash = process_file(full_path)
+                        if file_hash:
+                            files[rel_path] = FileInfo(rel_path, file_hash, source, project_id)
+
+    return files
+
+def should_process_file(
+        config_manager,
+        file_path: str,
+        filename: str,
+        gitignore: Optional[pathspec.PathSpec],
+        base_path: str,
+        claudeignore: Optional[pathspec.PathSpec],
+        category_excludes: Optional[pathspec.PathSpec] = None
+) -> bool:
+    """Determines whether a file should be processed based on various criteria."""
+    use_ignore_files = config_manager.get("use_ignore_files", True)
+    rel_path = os.path.relpath(file_path, base_path)
+
+    # Check file size
+    max_file_size = config_manager.get("max_file_size", 32 * 1024)
+    if os.path.getsize(file_path) > max_file_size:
+        logger.debug(f"File {rel_path} exceeds max size of {max_file_size} bytes")
+        return False
+
+    # Skip temporary editor files
+    if filename.endswith("~"):
+        logger.debug(f"Skipping temporary file {rel_path}")
+        return False
+
+    # Apply ignore patterns if enabled
+    if use_ignore_files:
+        if gitignore and gitignore.match_file(rel_path):
+            logger.debug(f"File {rel_path} matches gitignore pattern")
+            return False
+
+        if claudeignore and claudeignore.match_file(rel_path):
+            logger.debug(f"File {rel_path} matches claudeignore pattern")
+            return False
+
+    # Check category-specific exclusions
+    if category_excludes and category_excludes.match_file(rel_path):
+        logger.debug(f"File {rel_path} excluded by category exclusion patterns")
+        return False
+
+    # Finally check if it's a text file
+    is_text = is_text_file(file_path)
+    if not is_text:
+        logger.debug(f"File {rel_path} is not a text file")
+    return is_text
+
+def process_file(file_path: str) -> Optional[str]:
+    """Process a single file and return its hash."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            content = file.read()
+            return compute_md5_hash(content)
+    except UnicodeDecodeError:
+        logger.debug(f"Unable to read {file_path} as UTF-8 text. Skipping.")
+    except Exception as e:
+        logger.error(f"Error reading file {file_path}: {str(e)}")
+    return None
 
 def normalize_and_calculate_md5(content):
     """
@@ -30,7 +255,6 @@ def normalize_and_calculate_md5(content):
     """
     normalized_content = content.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.md5(normalized_content.encode("utf-8")).hexdigest()
-
 
 def load_gitignore(base_path):
     """
@@ -54,7 +278,6 @@ def load_gitignore(base_path):
             return pathspec.PathSpec.from_lines("gitwildmatch", f)
     return None
 
-
 def is_text_file(file_path, sample_size=8192):
     """
     Determines if a file is a text file by checking for the absence of null bytes.
@@ -77,7 +300,6 @@ def is_text_file(file_path, sample_size=8192):
     except IOError:
         return False
 
-
 def compute_md5_hash(content):
     """
     Computes the MD5 hash of the given content.
@@ -93,78 +315,6 @@ def compute_md5_hash(content):
         str: The hexadecimal MD5 hash of the input content.
     """
     return hashlib.md5(content.encode("utf-8")).hexdigest()
-
-
-def should_process_file(
-        config_manager, file_path, filename, gitignore, base_path, claudeignore, category_excludes=None
-):
-    """
-    Determines whether a file should be processed based on various criteria.
-    """
-    # Check if ignore files should be used
-    use_ignore_files = config_manager.get("use_ignore_files", True)
-
-    # Get relative path for pattern matching
-    rel_path = os.path.relpath(file_path, base_path)
-
-    # Check file size
-    max_file_size = config_manager.get("max_file_size", 32 * 1024)
-    if os.path.getsize(file_path) > max_file_size:
-        logger.debug(f"File {rel_path} exceeds max size of {max_file_size} bytes")
-        return False
-
-    # Skip temporary editor files
-    if filename.endswith("~"):
-        logger.debug(f"Skipping temporary file {rel_path}")
-        return False
-
-    # Apply ignore patterns if enabled
-    if use_ignore_files:
-        # Use gitignore rules if available
-        if gitignore and gitignore.match_file(rel_path):
-            logger.debug(f"File {rel_path} matches gitignore pattern")
-            return False
-
-        # Use .claudeignore rules if available
-        if claudeignore and claudeignore.match_file(rel_path):
-            logger.debug(f"File {rel_path} matches claudeignore pattern")
-            return False
-
-    # Check category-specific exclusions
-    if category_excludes and category_excludes.match_file(rel_path):
-        logger.debug(f"File {rel_path} excluded by category exclusion patterns")
-        return False
-
-    # Finally check if it's a text file
-    is_text = is_text_file(file_path)
-    if not is_text:
-        logger.debug(f"File {rel_path} is not a text file")
-    return is_text
-
-
-def process_file(file_path):
-    """
-    Reads the content of a file and computes its MD5 hash.
-
-    This function attempts to read the file as UTF-8 text and compute its MD5 hash.
-    If the file cannot be read as UTF-8 or any other error occurs, it logs the issue
-    and returns None.
-
-    Args:
-        file_path (str): The path to the file to be processed.
-
-    Returns:
-        str or None: The MD5 hash of the file's content if successful, None otherwise.
-    """
-    try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            content = file.read()
-            return compute_md5_hash(content)
-    except UnicodeDecodeError:
-        logger.debug(f"Unable to read {file_path} as UTF-8 text. Skipping.")
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {str(e)}")
-    return None
 
 def should_skip_directory(dir_path: str, base_path: str, gitignore, claudeignore, category_excludes) -> bool:
     """
@@ -199,81 +349,6 @@ def should_skip_directory(dir_path: str, base_path: str, gitignore, claudeignore
 
     return False
 
-def get_local_files(config, root_path, files_config):
-    """
-    Get local files matching the patterns in files configuration with optimized directory traversal.
-    """
-    use_ignore_files = files_config.get("use_ignore_files", True)
-    gitignore = load_gitignore(root_path) if use_ignore_files else None
-    claudeignore = load_claudeignore(root_path) if use_ignore_files else None
-
-    files = {}
-    exclude_dirs = {".git", ".svn", ".hg", ".bzr", "_darcs", "CVS", "claude_chats", ".claudesync"}
-
-    # Get push_roots from configuration
-    push_roots = files_config.get("push_roots", [])
-    includes = files_config.get("includes", ["*"])
-    excludes = files_config.get("excludes", [])
-
-    category_excludes = None
-    if excludes:
-        category_excludes = pathspec.PathSpec.from_lines("gitwildmatch", excludes)
-
-    spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
-
-    logger.debug(f"Starting file system traversal at {root_path}")
-    logger.debug(f"Using ignore files: {use_ignore_files}")
-    logger.debug(f"Using push roots: {push_roots}")
-    traversal_start = time_module.time()
-
-    # If push_roots is specified, only traverse those directories
-    roots_to_traverse = [os.path.join(root_path, root) for root in push_roots] if push_roots else [root_path]
-
-    for base_root in roots_to_traverse:
-        if not os.path.exists(base_root):
-            logger.warning(f"Specified root path does not exist: {base_root}")
-            continue
-
-        for root, dirs, filenames in os.walk(base_root, topdown=True):
-            # Filter out excluded directories first
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
-
-            if use_ignore_files:
-                dirs[:] = [
-                    d for d in dirs
-                    if not should_skip_directory(
-                        os.path.join(root, d),
-                        root_path,  # Keep using root_path as base for relative paths
-                        gitignore,
-                        claudeignore,
-                        category_excludes
-                    )
-                ]
-
-            for filename in filenames:
-                rel_path = os.path.relpath(os.path.join(root, filename), root_path)
-
-                if spec.match_file(rel_path):
-                    full_path = os.path.join(root, filename)
-                    if should_process_file(
-                            config,
-                            full_path,
-                            filename,
-                            gitignore if use_ignore_files else None,
-                            root_path,
-                            claudeignore if use_ignore_files else None,
-                            category_excludes
-                    ):
-                        file_hash = process_file(full_path)
-                        if file_hash:
-                            files[rel_path] = file_hash
-
-    traversal_time = time_module.time() - traversal_start
-    logger.debug(f"File system traversal completed in {traversal_time:.2f} seconds")
-    logger.debug(f"Found {len(files)} files to sync")
-
-    return files
-
 def handle_errors(func):
     """
     A decorator that wraps a function to catch and handle specific exceptions.
@@ -299,7 +374,6 @@ def handle_errors(func):
             click.echo(f"Error: {str(e)}")
 
     return wrapper
-
 
 def validate_and_get_provider(config, require_org=True, require_project=False):
     """
@@ -373,7 +447,6 @@ def validate_and_store_local_path(config):
             break
         else:
             click.echo("Please enter an absolute path.")
-
 
 def load_claudeignore(base_path):
     """
