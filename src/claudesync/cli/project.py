@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import List, Optional, Dict
 
 import click
 import os
@@ -35,164 +36,253 @@ def get_default_internal_name():
         return 'all'  # Return 'all' if no .claudesync directory exists yet
 
 @project.command()
-@click.option(
-    "--template",
-    help="Name of an existing project to use as a template (e.g. 'myproject' will use .claudesync/myproject.project.json)",
-)
-@click.option(
-    "--name",
-    help="The name of the project",
-    required=False,
-)
-@click.option(
-    "--internal-name",
-    help="The internal name used for configuration files",
-    required=False,
-)
-@click.option(
-    "--description",
-    help="The project description",
-    required=False,
-)
-@click.option(
-    "--organization",
-    help="The organization ID to use for this project",
-    required=False,
-)
-@click.option(
-    "--no-git-check",
-    is_flag=True,
-    help="Skip git repository check",
-)
+@click.option("--template", help="Name of an existing project to use as a template (e.g. 'myproject' will use .claudesync/myproject.project.json)",)
+@click.option("--name", help="The name of the project", required=False,)
+@click.option("--internal-name",help="The internal name used for configuration files",required=False,)
+@click.option("--description", help="The project description", required=False,)
+@click.option("--organization", help="The organization ID to use for this project", required=False,)
+@click.option("--no-git-check", is_flag=True, help="Skip git repository check",)
+@click.option("--references", help="Comma-separated list of referenced project identifiers", required=False)
+@click.option("--reference-paths", help="JSON string mapping reference IDs to paths", required=False)
 @click.pass_context
 @handle_errors
-def create(ctx, template, name, internal_name, description, organization, no_git_check):
-    """Creates a new project for the selected provider.
-
-    There are two ways to create a project:
-
-    1. Interactive mode (default):
-       claudesync project create
-
-    2. Using an existing project as template:
-       claudesync project create --template existing-project
-    """
+def create(ctx, template, name, internal_name, description, organization, no_git_check, references, reference_paths):
+    """Creates a new project with optional referenced projects support."""
     config = ctx.obj
     provider_instance = get_provider(config)
 
-    # Handle configuration from template if provided
+    # Process template if provided
+    template_config = None
     if template:
-        try:
-            # Look for template in .claudesync directory
-            claudesync_dir = Path.cwd() / ".claudesync"
-            template_file = claudesync_dir / f"{template}.project.json"
+        template_config = _load_template_config(template)
 
-            if not template_file.exists():
-                raise ConfigurationError(f"Template project configuration not found: {template_file}")
+    # Get project details either from template, options, or prompt
+    name, internal_name, description = _get_project_details(
+        name, internal_name, description, template_config
+    )
 
-            with open(template_file, 'r') as f:
-                template_config = json.load(f)
+    # Process references
+    reference_ids = _process_references(references)
+    reference_paths_dict = _process_reference_paths(reference_paths)
 
-            # Extract required fields
-            name = name or template_config.get('project_name')
-            internal_name = internal_name or get_default_internal_name()
-            # Description is optional, default to standard description if not provided
-            description = description or template_config.get('project_description', "Project created with ClaudeSync")
+    # Validate reference paths if provided
+    if reference_ids and reference_paths_dict:
+        _validate_reference_configuration(reference_ids, reference_paths_dict)
 
-            if not all([name, internal_name]):
-                raise ConfigurationError("Template must contain 'project_name' and 'internal_name' fields")
+    # Create project remotely
+    new_project = _create_remote_project(
+        provider_instance, organization, name, description
+    )
 
-        except json.JSONDecodeError as e:
-            raise ConfigurationError(f"Invalid JSON in template file: {str(e)}")
-        except IOError as e:
-            raise ConfigurationError(f"Error reading template file: {str(e)}")
-    else:
-        # Interactive mode - prompt for required values if not provided
-        if not name:
-            name = click.prompt("Enter a title for your new project", default=Path.cwd().name)
+    # Create local configuration files
+    _create_local_configuration(
+        config,
+        new_project,
+        name,
+        internal_name,
+        description,
+        template_config,
+        reference_ids,
+        reference_paths_dict
+    )
 
-        if not internal_name:
-            default_internal = get_default_internal_name()
-            internal_name = click.prompt("Enter the internal name for your project (used for config files)",
-                                         default=default_internal)
+    click.echo(f"\nProject created successfully:")
+    _display_project_info(new_project, internal_name, reference_ids)
 
-        if not description:
-            description = click.prompt("Enter the project description",
-                                       default="Project created with ClaudeSync")
+def _load_template_config(template: str) -> Optional[dict]:
+    """Load configuration from template project."""
+    try:
+        claudesync_dir = Path.cwd() / ".claudesync"
+        template_file = claudesync_dir / f"{template}.project.json"
 
-    # Get organization from available organizations
+        if not template_file.exists():
+            raise ConfigurationError(f"Template project configuration not found: {template_file}")
+
+        with open(template_file, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigurationError(f"Invalid JSON in template file: {str(e)}")
+    except IOError as e:
+        raise ConfigurationError(f"Error reading template file: {str(e)}")
+
+def _get_project_details(
+        name: Optional[str],
+        internal_name: Optional[str],
+        description: Optional[str],
+        template_config: Optional[dict]
+) -> tuple:
+    """Get project details from template, options, or prompt."""
+    # Use template values if available
+    if template_config:
+        name = name or template_config.get('project_name')
+        internal_name = internal_name or get_default_internal_name()
+        description = description or template_config.get(
+            'project_description', "Project created with ClaudeSync"
+        )
+
+    # Otherwise prompt for values
+    if not name:
+        name = click.prompt(
+            "Enter a title for your new project",
+            default=Path.cwd().name
+        )
+
+    if not internal_name:
+        default_internal = get_default_internal_name()
+        internal_name = click.prompt(
+            "Enter the internal name for your project (used for config files)",
+            default=default_internal
+        )
+
+    if not description:
+        description = click.prompt(
+            "Enter the project description",
+            default="Project created with ClaudeSync"
+        )
+
+    return name, internal_name, description
+
+def _process_references(references: Optional[str]) -> List[str]:
+    """Process comma-separated references into list."""
+    if not references:
+        return []
+    return [ref.strip() for ref in references.split(',') if ref.strip()]
+
+def _process_reference_paths(reference_paths: Optional[str]) -> Dict[str, str]:
+    """Process JSON reference paths string into dictionary."""
+    if not reference_paths:
+        return {}
+
+    try:
+        paths_dict = json.loads(reference_paths)
+        if not isinstance(paths_dict, dict):
+            raise ConfigurationError("Reference paths must be a JSON object")
+        return paths_dict
+    except json.JSONDecodeError:
+        raise ConfigurationError("Invalid JSON in reference paths")
+
+def _validate_reference_configuration(
+        reference_ids: List[str],
+        reference_paths: Dict[str, str]
+) -> None:
+    """Validate reference configuration."""
+    # Check all referenced projects have paths
+    missing_paths = [ref_id for ref_id in reference_ids if ref_id not in reference_paths]
+    if missing_paths:
+        raise ConfigurationError(
+            f"Missing paths for referenced projects: {', '.join(missing_paths)}"
+        )
+
+    # Validate each reference path
+    for ref_id, path in reference_paths.items():
+        path_obj = Path(path)
+
+        # Path must be absolute
+        if not path_obj.is_absolute():
+            raise ConfigurationError(f"Reference path must be absolute: {path}")
+
+        # Path must exist and be readable
+        if not path_obj.exists():
+            raise ConfigurationError(f"Reference path does not exist: {path}")
+
+        if not os.access(path, os.R_OK):
+            raise ConfigurationError(f"Reference path is not readable: {path}")
+
+        # Must be within a .claudesync directory
+        if '.claudesync' not in path_obj.parts:
+            raise ConfigurationError(
+                f"Reference path must be within .claudesync directory: {path}"
+            )
+
+        # No symlinks allowed
+        if path_obj.is_symlink():
+            raise ConfigurationError(f"Symlinks not allowed in reference paths: {path}")
+
+def _create_remote_project(provider_instance, organization, name, description) -> dict:
+    """Create project on remote provider."""
     organizations = provider_instance.get_organizations()
     organization_instance = organizations[0] if organizations else None
     organization_id = organization or organization_instance["id"]
 
-    # Get the current directory
-    current_dir = Path.cwd()
+    new_project = provider_instance.create_project(organization_id, name, description)
+    click.echo(
+        f"Project '{new_project['name']}' (uuid: {new_project['uuid']}) "
+        f"has been created successfully."
+    )
+    return new_project
 
-    # Create .claudesync directory if it doesn't exist
+def _create_local_configuration(
+        config,
+        new_project: dict,
+        name: str,
+        internal_name: str,
+        description: str,
+        template_config: Optional[dict],
+        reference_ids: List[str],
+        reference_paths: Dict[str, str]
+) -> None:
+    """Create local configuration files."""
+    current_dir = Path.cwd()
     claudesync_dir = current_dir / ".claudesync"
     os.makedirs(claudesync_dir, exist_ok=True)
 
-    try:
-        # Create the project remotely
-        new_project = provider_instance.create_project(organization_id, name, description)
-        click.echo(
-            f"Project '{new_project['name']}' (uuid: {new_project['uuid']}) has been created successfully."
-        )
+    # Create project ID configuration
+    project_id_config = {
+        "project_id": new_project["uuid"],
+        "reference_paths": reference_paths
+    }
 
-        # Create project ID configuration file
-        project_id_config = {
-            "project_id": new_project["uuid"],
+    # Create project configuration
+    if template_config:
+        project_config = {
+            "project_name": new_project["name"],
+            "project_description": description,
+            "includes": template_config.get('includes', []),
+            "excludes": template_config.get('excludes', []),
+            "use_ignore_files": template_config.get('use_ignore_files', True),
+            "push_roots": template_config.get('push_roots', []),
+            "references": reference_ids
+        }
+    else:
+        project_config = {
+            "project_name": new_project["name"],
+            "project_description": description,
+            "includes": ["*"],
+            "excludes": [],
+            "use_ignore_files": True,
+            "push_roots": [],
+            "references": reference_ids
         }
 
-        # Create project configuration file
-        if template:
-            # Use configuration from template
-            project_config = {
-                "project_name": new_project["name"],
-                "project_description": description,
-                "includes": template_config.get('includes', []),
-                "excludes": template_config.get('excludes', []),
-                "use_ignore_files": template_config.get('use_ignore_files', True),
-                "push_roots": template_config.get('push_roots', [])
-            }
-        else:
-            # Use default configuration
-            project_config = {
-                "project_name": new_project["name"],
-                "project_description": description,
-                "includes": [],
-                "excludes": [],
-                "use_ignore_files": True,
-                "push_roots": []
-            }
+    # Handle nested project paths
+    config_path = Path(internal_name)
+    if len(config_path.parts) > 1:
+        os.makedirs(claudesync_dir / config_path.parent, exist_ok=True)
 
-        # Determine if internal_name contains a path
-        config_path = Path(internal_name)
-        if len(config_path.parts) > 1:
-            # Create subdirectories if needed
-            os.makedirs(claudesync_dir / config_path.parent, exist_ok=True)
+    # Save configurations
+    project_id_config_path = claudesync_dir / f"{internal_name}.project_id.json"
+    with open(project_id_config_path, 'w') as f:
+        json.dump(project_id_config, f, indent=2)
 
-        # Save project configuration
-        project_id_config_path = claudesync_dir / f"{internal_name}.project_id.json"
-        with open(project_id_config_path, 'w') as f:
-            json.dump(project_id_config, f, indent=2)
+    project_config_path = claudesync_dir / f"{internal_name}.project.json"
+    with open(project_config_path, 'w') as f:
+        json.dump(project_config, f, indent=2)
 
-        # Save files configuration
-        project_config_path = claudesync_dir / f"{internal_name}.project.json"
-        with open(project_config_path, 'w') as f:
-            json.dump(project_config, f, indent=2)
+    # Set as active project
+    config.set_active_project(internal_name, new_project["uuid"])
 
-        # Set as active project
-        config.set_active_project(internal_name, new_project["uuid"])
+def _display_project_info(new_project: dict, internal_name: str, reference_ids: List[str]) -> None:
+    """Display project information after creation."""
+    current_dir = Path.cwd()
+    click.echo(f"Project location: {current_dir}")
+    click.echo(f"Project ID config: {current_dir}/.claudesync/{internal_name}.project_id.json")
+    click.echo(f"Project config: {current_dir}/.claudesync/{internal_name}.project.json")
+    click.echo(f"Remote URL: https://claude.ai/project/{new_project['uuid']}")
 
-        click.echo("\nProject created and set as active:")
-        click.echo(f"  - Project location: {current_dir}")
-        click.echo(f"  - Project ID config: {project_id_config_path}")
-        click.echo(f"  - Project config: {project_config_path}")
-        click.echo(f"  - Remote URL: https://claude.ai/project/{new_project['uuid']}")
-
-    except (ProviderError, ConfigurationError) as e:
-        click.echo(f"Failed to create project: {str(e)}")
+    if reference_ids:
+        click.echo("\nReferenced projects:")
+        for ref_id in reference_ids:
+            click.echo(f"  - {ref_id}")
 
 # Add this to src/claudesync/cli/project.py, right after the @project.command() create function
 
