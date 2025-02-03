@@ -21,11 +21,12 @@ class FileSource:
 
 class FileInfo:
     """Information about a collected file."""
-    def __init__(self, path: str, hash: str, source: str, project_id: Optional[str] = None):
+    def __init__(self, path: str, hash: str, source: str, project_id: Optional[str] = None, root_path: Optional[str] = None):
         self.path = path
         self.hash = hash
         self.source = source
         self.project_id = project_id
+        self.root_path = root_path  # Store the root path for this file
 
 def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, FileInfo]:
     """
@@ -75,26 +76,39 @@ def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, Fil
             logger.warning(f"Failed to load config for referenced project {ref_id}")
             continue
 
-        # Get root path for referenced project
-        ref_path = Path(reference_paths[ref_id])
-        ref_root = ref_path.parent.parent  # Move up from .claudesync/config.json
+        try:
+            # Load referenced project config
+            ref_config_path = Path(reference_paths[ref_id])
+            ref_root = ref_config_path.parent.parent  # Move up from .claudesync/config.json
 
-        # Collect files from referenced project
-        ref_files = _collect_project_files(
-            config,
-            str(ref_root),
-            ref_config,
-            FileSource.REFERENCED,
-            ref_id
-        )
-        logger.debug(f"Collected {len(ref_files)} files from referenced project {ref_id}")
+            ref_config = config._load_referenced_project_config(ref_id, reference_paths)
+            if not ref_config:
+                logger.warning(f"Failed to load config for referenced project {ref_id}")
+                continue
 
-        # Handle duplicates (main project files take precedence)
-        for path, file_info in ref_files.items():
-            if path not in all_files:
-                all_files[path] = file_info
-            else:
-                logger.debug(f"Skipping duplicate file from reference: {path}")
+            logger.debug(f"Processing referenced project {ref_id} at {ref_root}")
+
+            # Collect files from referenced project using its root
+            ref_files = _collect_project_files(
+                config,
+                str(ref_root),
+                ref_config,
+                FileSource.REFERENCED,
+                ref_id
+            )
+            logger.debug(f"Collected {len(ref_files)} files from referenced project {ref_id}")
+
+            # Handle duplicates (main project files take precedence)
+            for path, file_info in ref_files.items():
+                if path not in all_files:
+                    file_info.root_path = str(ref_root)  # Store the root path
+                    all_files[path] = file_info
+                else:
+                    logger.debug(f"Skipping duplicate file from reference: {path}")
+
+        except Exception as e:
+            logger.error(f"Error processing referenced project {ref_id}: {e}")
+            continue
 
     logger.debug(f"Total files collected: {len(all_files)}")
     return all_files
@@ -136,6 +150,8 @@ def _collect_project_files(
         category_excludes = pathspec.PathSpec.from_lines("gitwildmatch", excludes)
 
     spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
+    logger.debug(f"Using root path: {root_path}")
+    logger.debug(f"Push roots: {push_roots}")
 
     # Determine roots to traverse
     roots_to_traverse = [os.path.join(root_path, root) for root in push_roots] if push_roots else [root_path]
@@ -144,6 +160,8 @@ def _collect_project_files(
         if not os.path.exists(base_root):
             logger.warning(f"Specified root path does not exist: {base_root}")
             continue
+
+        logger.debug(f"Traversing root: {base_root}")
 
         for root, dirs, filenames in os.walk(base_root, topdown=True):
             # Filter out excluded directories
@@ -162,22 +180,32 @@ def _collect_project_files(
                 ]
 
             for filename in filenames:
-                rel_path = os.path.relpath(os.path.join(root, filename), root_path)
+                try:
+                    abs_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(abs_path, root_path)
 
-                if spec.match_file(rel_path):
-                    full_path = os.path.join(root, filename)
-                    if should_process_file(
-                            config,
-                            full_path,
-                            filename,
-                            gitignore if use_ignore_files else None,
-                            root_path,
-                            claudeignore if use_ignore_files else None,
-                            category_excludes
-                    ):
-                        file_hash = process_file(full_path)
-                        if file_hash:
-                            files[rel_path] = FileInfo(rel_path, file_hash, source, project_id)
+                    if spec.match_file(rel_path):
+                        if should_process_file(
+                                config,
+                                abs_path,
+                                filename,
+                                gitignore if use_ignore_files else None,
+                                root_path,
+                                claudeignore if use_ignore_files else None,
+                                category_excludes
+                        ):
+                            file_hash = process_file(abs_path)
+                            if file_hash:
+                                files[rel_path] = FileInfo(
+                                    path=rel_path,
+                                    hash=file_hash,
+                                    source=source,
+                                    project_id=project_id,
+                                    root_path=root_path
+                                )
+                except Exception as e:
+                    logger.error(f"Error processing file {filename}: {e}")
+                    continue
 
     return files
 

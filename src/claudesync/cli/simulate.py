@@ -14,7 +14,7 @@ from pathlib import Path
 from pathspec import pathspec
 
 from ..exceptions import ConfigurationError
-from ..utils import get_local_files, load_gitignore, load_claudeignore
+from ..utils import get_local_files, load_gitignore, load_claudeignore, FileInfo, FileSource
 from ..configmanager import FileConfigManager
 from typing import Dict, List, Optional, TypedDict
 
@@ -215,6 +215,104 @@ def format_size(size):
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
+
+def get_root_path(file_info: FileInfo, config, reference_paths: Dict[str, str] = None) -> str:
+    """
+    Get the correct root path for a file based on its source.
+
+    Args:
+        file_info: FileInfo object containing file metadata
+        config: Configuration manager instance
+        reference_paths: Dictionary mapping reference IDs to their paths
+
+    Returns:
+        str: The root path for the file
+    """
+    if file_info.source == FileSource.MAIN:
+        return config.get_project_root()
+
+    if file_info.source == FileSource.REFERENCED and file_info.project_id:
+        if not reference_paths:
+            # Get reference paths if not provided
+            active_project = config.get_active_project()[0]
+            reference_paths = config._get_reference_paths(active_project)
+
+        if file_info.project_id in reference_paths:
+            ref_path = Path(reference_paths[file_info.project_id])
+            return str(ref_path.parent.parent)  # Move up from .claudesync/config.json
+
+    # Fallback to main project root
+    return config.get_project_root()
+
+def display_file_list(files: Dict[str, FileInfo], config) -> None:
+    """Display a formatted list of files that would be synchronized."""
+    if not files:
+        click.echo("No files would be synchronized.")
+        return
+
+    # Get active project and reference paths
+    active_project = config.get_active_project()[0]
+    reference_paths = config._get_reference_paths(active_project) if active_project else {}
+
+    # Group files by source
+    main_files = []
+    referenced_files = {}
+
+    for path, file_info in files.items():
+        if file_info.source == FileSource.MAIN:
+            main_files.append((path, file_info))
+        else:
+            project_id = file_info.project_id or "unknown"
+            if project_id not in referenced_files:
+                referenced_files[project_id] = []
+            referenced_files[project_id].append((path, file_info))
+
+    # Calculate totals using get_root_path
+    total_files = len(files)
+    total_size = 0
+
+    # Display main project files
+    click.echo("\nMain Project Files:")
+    click.echo("=" * 80)
+    if main_files:
+        for path, file_info in sorted(main_files):
+            try:
+                root_path = get_root_path(file_info, config, reference_paths)
+                full_path = os.path.join(root_path, path)
+                size = os.path.getsize(full_path)
+                total_size += size
+                click.echo(f"{path:<60} {format_size(size):>10}")
+            except OSError as e:
+                logger.error(f"Error accessing file {path}: {e}")
+                click.echo(f"{path:<60} {'ERROR':>10}")
+    else:
+        click.echo("No files from main project")
+
+    # Display referenced project files
+    if referenced_files:
+        for project_id, files_list in referenced_files.items():
+            click.echo(f"\nReferenced Project: {project_id}")
+            click.echo("=" * 80)
+            for path, file_info in sorted(files_list):
+                try:
+                    root_path = get_root_path(file_info, config, reference_paths)
+                    full_path = os.path.join(root_path, path)
+                    size = os.path.getsize(full_path)
+                    total_size += size
+                    click.echo(f"{path:<60} {format_size(size):>10}")
+                except OSError as e:
+                    logger.error(f"Error accessing file {path}: {e}")
+                    click.echo(f"{path:<60} {'ERROR':>10}")
+
+    # Display summary
+    click.echo("\nSummary:")
+    click.echo("=" * 80)
+    click.echo(f"Total files: {total_files}")
+    click.echo(f"Total size: {format_size(total_size)}")
+    click.echo(f"Main project files: {len(main_files)}")
+    for project_id, files_list in referenced_files.items():
+        click.echo(f"Referenced project {project_id}: {len(files_list)} files")
+
 
 class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, config=None, **kwargs):
@@ -439,57 +537,74 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 @click.command()
 @click.option('--port', default=4201, help='Port to run the server on')
 @click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
+@click.option('--list', 'show_list', is_flag=True, help='Show list of files to be synchronized')
 @click.pass_obj
-def simulate_push(config, port, no_browser):
-    """Launch a visualization of files to be synchronized."""
-    logger.debug("Starting simulate command")
-
-    web_dir = os.path.join(os.path.dirname(__file__), '../web/dist/claudesync-simulate')
-    logger.debug(f"Web directory path: {web_dir}")
-
-    if not os.path.exists(web_dir):
-        logger.error(f"Web directory does not exist: {web_dir}")
-        click.echo(f"Error: Web directory not found at {web_dir}")
-        return
-
-    os.chdir(web_dir)
-
-    class LocalhostTCPServer(socketserver.TCPServer):
-        def server_bind(self):
-            self.socket.setsockopt(socketserver.socket.SOL_SOCKET, socketserver.socket.SO_REUSEADDR, 1)
-            self.socket.bind(('127.0.0.1', self.server_address[1]))
-
-    handler = lambda *args: SyncDataHandler(*args, config=config)
-
+def simulate_push(config, port, no_browser, show_list):
+    """Simulate file synchronization and optionally display file list."""
     try:
-        with LocalhostTCPServer(("127.0.0.1", port), handler) as httpd:
-            url = f"http://localhost:{port}"
-            click.echo(f"Server started at {url}")
+        # Get active project configuration
+        active_project = config.get_active_project()[0]
+        if not active_project:
+            raise ConfigurationError("No active project found")
 
-            # Get active project for initial message
-            try:
-                active_project = config.get_active_project()[0]
+        files_config = config.get_files_config(active_project)
+        project_root = config.get_project_root()
+
+        # Get files that would be synced
+        files_to_sync = get_local_files(config, project_root, files_config)
+
+        if show_list:
+            # Display file list and exit
+            display_file_list(files_to_sync, config)
+            return
+
+        # Continue with visualization server
+        web_dir = os.path.join(os.path.dirname(__file__), '../web/dist/claudesync-simulate')
+        logger.debug(f"Web directory path: {web_dir}")
+
+        if not os.path.exists(web_dir):
+            logger.error(f"Web directory does not exist: {web_dir}")
+            click.echo(f"Error: Web directory not found at {web_dir}")
+            return
+
+        os.chdir(web_dir)
+
+        class LocalhostTCPServer(socketserver.TCPServer):
+            def server_bind(self):
+                self.socket.setsockopt(socketserver.socket.SOL_SOCKET, socketserver.socket.SO_REUSEADDR, 1)
+                self.socket.bind(('127.0.0.1', self.server_address[1]))
+
+        handler = lambda *args: SyncDataHandler(*args, config=config)
+
+        try:
+            with LocalhostTCPServer(("127.0.0.1", port), handler) as httpd:
+                url = f"http://localhost:{port}"
+                click.echo(f"Server started at {url}")
                 click.echo(f"Simulating sync for active project: {active_project}")
-            except ConfigurationError:
-                click.echo("Warning: No active project set")
 
-            logger.debug(f"Server started on port {port}, bound to localhost only")
+                if not no_browser:
+                    webbrowser.open(url)
 
-            if not no_browser:
-                webbrowser.open(url)
+                click.echo("Press Ctrl+C to stop the server...")
+                try:
+                    httpd.serve_forever()
+                except KeyboardInterrupt:
+                    logger.debug("Received KeyboardInterrupt, shutting down server")
+                    click.echo("\nShutting down server...")
+                    httpd.shutdown()
+                    httpd.server_close()
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                logger.error(f"Port {port} is already in use")
+                click.echo(f"Error: Port {port} is already in use. Try a different port with --port option.")
+            else:
+                logger.error(f"Failed to start server: {e}")
+                click.echo(f"Error: Failed to start server: {e}")
 
-            click.echo("Press Ctrl+C to stop the server...")
-            try:
-                httpd.serve_forever()
-            except KeyboardInterrupt:
-                logger.debug("Received KeyboardInterrupt, shutting down server")
-                click.echo("\nShutting down server...")
-                httpd.shutdown()
-                httpd.server_close()
-    except OSError as e:
-        if e.errno == 98:  # Address already in use
-            logger.error(f"Port {port} is already in use")
-            click.echo(f"Error: Port {port} is already in use. Try a different port with --port option.")
-        else:
-            logger.error(f"Failed to start server: {e}")
-            click.echo(f"Error: Failed to start server: {e}")
+    except ConfigurationError as e:
+        click.echo(f"Error: {str(e)}")
+        return
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        click.echo(f"Error: An unexpected error occurred: {str(e)}")
+        return
