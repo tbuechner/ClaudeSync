@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 import logging
+from typing import Dict, Optional, List
 
 from claudesync.configmanager.base_config_manager import BaseConfigManager
 from claudesync.exceptions import ConfigurationError
@@ -33,6 +34,227 @@ class FileConfigManager(BaseConfigManager):
             self.config_dir = Path(config_dir)
         else:
             self.config_dir = self._find_config_dir()
+
+        # Cache for referenced project configurations
+        self._referenced_configs_cache = {}
+
+    # Start Referenced projects
+
+    def get_files_config(self, project_path: str, include_references: bool = True) -> dict:
+        """
+        Get files configuration from files-specific JSON file, optionally including referenced projects.
+
+        Args:
+            project_path: Path to the project like 'datamodel/typeconstraints'
+            include_references: Whether to include configurations from referenced projects
+
+        Returns:
+            dict: Combined configuration including referenced projects if specified
+        """
+        if not self.config_dir:
+            raise ConfigurationError("No .claudesync directory found")
+
+        # Get main project config
+        main_config = self._load_project_config(project_path)
+
+        if not include_references:
+            return main_config
+
+        # Handle referenced projects
+        references = main_config.get('references', [])
+        if not references:
+            return main_config
+
+        # Get reference paths
+        reference_paths = self._get_reference_paths(project_path)
+        if not reference_paths:
+            return main_config
+
+        # Combine configurations
+        combined_config = main_config.copy()
+        referenced_files = []
+
+        for ref_id in references:
+            ref_config = self._load_referenced_project_config(ref_id, reference_paths)
+            if ref_config:
+                referenced_files.extend(self._process_reference_config(ref_config))
+
+        if referenced_files:
+            combined_config['referenced_files'] = referenced_files
+
+        return combined_config
+
+    def _load_project_config(self, project_path: str) -> dict:
+        """Load the main project configuration file."""
+        files_file = self._get_project_config_path(project_path)
+        if not files_file.exists():
+            raise ConfigurationError(f"Project configuration not found for {project_path}")
+
+        with open(files_file) as f:
+            return json.load(f)
+
+    def _get_project_config_path(self, project_path: str) -> Path:
+        """Get the path to a project's configuration file."""
+        files_file = self.config_dir / f"{project_path}.project.json"
+        if not files_file.exists():
+            # Try with subdirectories
+            parts = project_path.split('/')
+            files_file = self.config_dir / '/'.join(parts[:-1]) / f"{parts[-1]}.project.json"
+        return files_file
+
+    def _get_reference_paths(self, project_path: str) -> Dict[str, str]:
+        """
+        Get the reference paths from project_id configuration.
+
+        Args:
+            project_path: Path to the project
+
+        Returns:
+            dict: Mapping of reference IDs to their absolute paths
+        """
+        project_id_file = self.config_dir / f"{project_path}.project_id.json"
+        if not project_id_file.exists():
+            # Try with subdirectories
+            parts = project_path.split('/')
+            project_id_file = self.config_dir / '/'.join(parts[:-1]) / f"{parts[-1]}.project_id.json"
+
+        if not project_id_file.exists():
+            return {}
+
+        with open(project_id_file) as f:
+            config = json.load(f)
+            return config.get('reference_paths', {})
+
+    def _load_referenced_project_config(self, ref_id: str, reference_paths: Dict[str, str]) -> Optional[dict]:
+        """
+        Load and validate a referenced project's configuration.
+
+        Args:
+            ref_id: Reference identifier
+            reference_paths: Mapping of reference IDs to paths
+
+        Returns:
+            dict or None: Referenced project configuration if valid
+        """
+        # Check cache first
+        if ref_id in self._referenced_configs_cache:
+            return self._referenced_configs_cache[ref_id]
+
+        # Get reference path
+        ref_path = reference_paths.get(ref_id)
+        if not ref_path:
+            logging.warning(f"No path found for referenced project {ref_id}")
+            return None
+
+        # Validate path
+        ref_path = Path(ref_path)
+        if not self._validate_reference_path(ref_path):
+            return None
+
+        try:
+            with open(ref_path) as f:
+                config = json.load(f)
+                self._referenced_configs_cache[ref_id] = config
+                return config
+        except (json.JSONDecodeError, IOError) as e:
+            logging.error(f"Error loading referenced project {ref_id}: {str(e)}")
+            return None
+
+    def _validate_reference_path(self, path: Path) -> bool:
+        """
+        Validate a referenced project path for security and correctness.
+
+        Args:
+            path: Path to validate
+
+        Returns:
+            bool: True if path is valid
+        """
+        try:
+            # Must be absolute
+            if not path.is_absolute():
+                logging.error(f"Referenced path must be absolute: {path}")
+                return False
+
+            # Must exist and be readable
+            if not path.exists() or not os.access(path, os.R_OK):
+                logging.error(f"Referenced path not accessible: {path}")
+                return False
+
+            # Must be within a .claudesync directory
+            if '.claudesync' not in path.parts:
+                logging.error(f"Referenced path must be within .claudesync directory: {path}")
+                return False
+
+            # No symlinks allowed
+            if path.is_symlink():
+                logging.error(f"Symlinks not allowed in reference paths: {path}")
+                return False
+
+            return True
+
+        except Exception as e:
+            logging.error(f"Error validating reference path {path}: {str(e)}")
+            return False
+
+    def _process_reference_config(self, config: dict) -> List[dict]:
+        """
+        Process a referenced project's configuration.
+
+        Args:
+            config: Referenced project configuration
+
+        Returns:
+            list: List of file configurations from referenced project
+        """
+        includes = config.get('includes', [])
+        excludes = config.get('excludes', [])
+
+        return [{
+            'pattern': pattern,
+            'exclude': pattern in excludes
+        } for pattern in includes]
+
+    def validate_references(self, project_path: str) -> List[str]:
+        """
+        Validate all references for a project and return any errors.
+
+        Args:
+            project_path: Path to the project to validate
+
+        Returns:
+            list: List of error messages, empty if all valid
+        """
+        errors = []
+
+        try:
+            main_config = self._load_project_config(project_path)
+            references = main_config.get('references', [])
+
+            if not references:
+                return errors
+
+            reference_paths = self._get_reference_paths(project_path)
+
+            for ref_id in references:
+                if ref_id not in reference_paths:
+                    errors.append(f"No path configured for reference '{ref_id}'")
+                    continue
+
+                ref_path = Path(reference_paths[ref_id])
+                if not self._validate_reference_path(ref_path):
+                    errors.append(f"Invalid reference path for '{ref_id}': {ref_path}")
+
+        except Exception as e:
+            errors.append(f"Error validating references: {str(e)}")
+
+        return errors
+
+    def clear_reference_cache(self):
+        """Clear the cached referenced project configurations."""
+        self._referenced_configs_cache.clear()
+
+    # End Referenced projects
 
     def get_projects(self, include_unlinked=False):
         """
