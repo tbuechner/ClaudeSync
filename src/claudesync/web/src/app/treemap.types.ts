@@ -19,6 +19,7 @@ export interface FileInfo {
   fullPath: string; // Complete path including file name
   size: number;
   included: boolean;
+  source?: string;  // Source of the file (main project or referenced project)
 }
 
 export interface SelectedNode {

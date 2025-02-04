@@ -23,7 +23,7 @@ export class TreemapComponent implements OnDestroy {
   selectedNode: SelectedNode | null = null;
   showOnlyIncluded = false;
   isLoading = false;
-  showFileList = false
+  showFileList = false;
   private destroy$ = new Subject<void>();
   private baseUrl = 'http://localhost:4201/api';
 
@@ -103,51 +103,85 @@ export class TreemapComponent implements OnDestroy {
     }
   }
 
-  private flattenTree(node: any, parentId: string = ''): TreemapData {
+  private flattenTree(rootNode: any): TreemapData {
     const data: TreemapData = {
-      labels: [],
-      parents: [],
-      values: [],
-      ids: [],
-      included: []
+      labels: ['root', 'main', 'referenced'],  // Start with mandatory nodes
+      parents: ['', 'root', 'root'],          // Define parent relationships
+      values: [0, 0, 0],                      // Initial values will be calculated
+      ids: ['root', 'main', 'referenced'],    // Node IDs
+      included: [true, true, true]            // All sections are included
+    };
+    (data as any).customdata = [
+      { fileCount: 0, source: '', isRoot: true, isSection: false },
+      { fileCount: 0, source: 'main', isRoot: false, isSection: true },
+      { fileCount: 0, source: 'referenced', isRoot: false, isSection: true }
+    ];
+
+    // Calculate total size for a node and all its children
+    const calculateTotalSize = (node: any): number => {
+      if (!node) return 0;
+      if ('size' in node) return node.size;
+      if (!node.children) return 0;
+      return node.children.reduce((sum: number, child: any) => sum + calculateTotalSize(child), 0);
     };
 
-    // Calculate directory sizes first
-    const calculateSize = (node: any): number => {
-      if ('size' in node) {
-        return node.size;
-      }
-      return (node.children || []).reduce((sum: number, child: any) => sum + calculateSize(child), 0);
-    };
+    const processNode = (node: any, parentId: string, source: string): number => {
+      if (!node || node.name === 'root' || node.name === 'main' || node.name === 'referenced') return 0;
 
-    const processNode = (node: any, parentId: string) => {
       const currentId = parentId ? `${parentId}/${node.name}` : node.name;
+      const nodeSize = node.size || 0;
+      let totalSize = nodeSize;
 
+      // Process children first to calculate total size
+      if (node.children) {
+        // @ts-ignore
+        node.children.forEach(child => {
+          totalSize += processNode(child, currentId, source);
+        });
+      }
+
+      // Add node to data arrays
       data.labels.push(node.name);
       data.parents.push(parentId);
       data.ids.push(currentId);
+      data.values.push(totalSize);  // Use accumulated total size
+      data.included.push(node.included !== false);
 
-      // For both files and directories, calculate the total size
-      const totalSize = calculateSize(node);
-      data.values.push(totalSize);
+      // Add custom data
+      (data as any).customdata.push({
+        fileCount: node.children ? node.children.length : 0,
+        sizeFormatted: this.formatSizeForHover(totalSize),
+        included: node.included !== false,
+        isFile: !node.children || node.children.length === 0,
+        source: source
+      });
 
-      // For files, use the included property directly
-      // For directories, check if any children are included
-      const isIncluded = 'included' in node ? node.included :
-        (node.children || []).some((child: any) =>
-          'included' in child ? child.included : false
-        );
-      data.included.push(isIncluded);
-
-      // Process children if they exist
-      if (node.children) {
-        node.children.forEach((child: any) => {
-          processNode(child, currentId);
-        });
-      }
+      return totalSize;  // Return total size for parent calculation
     };
 
-    processNode(node, '');
+    // Process main section
+    // @ts-ignore
+    const mainNode = rootNode.children?.find(c => c.name === 'main');
+    if (mainNode?.children) {
+      // @ts-ignore
+      const mainTotal = mainNode.children.reduce((sum, child) =>
+        sum + processNode(child, 'main', 'main'), 0);
+      data.values[1] = mainTotal;  // Update main section total
+    }
+
+    // Process referenced section
+    // @ts-ignore
+    const referencedNode = rootNode.children?.find(c => c.name === 'referenced');
+    if (referencedNode?.children) {
+      // @ts-ignore
+      const referencedTotal = referencedNode.children.reduce((sum, child) =>
+        sum + processNode(child, 'referenced', 'referenced'), 0);
+      data.values[2] = referencedTotal;  // Update referenced section total
+    }
+
+    // Update root value as sum of main and referenced
+    data.values[0] = data.values[1] + data.values[2];
+
     return data;
   }
 
@@ -155,11 +189,10 @@ export class TreemapComponent implements OnDestroy {
     const files: FileInfo[] = [];
     this.fileNodeMap.clear();
 
-    const processNode = (node: any, parentPath: string = '') => {
+    const processNode = (node: any, parentPath: string = '', source: string = '') => {
       const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
 
       if ('size' in node) {
-        // This is a file node
         const pathParts = currentPath.split('/');
         pathParts.shift(); // Remove the first element (root directory name)
         const fileName = pathParts.pop() || '';
@@ -170,18 +203,30 @@ export class TreemapComponent implements OnDestroy {
           path: filePath,
           fullPath: currentPath,
           size: node.size,
-          included: node.included
+          included: node.included,
+          source
         };
 
         files.push(fileInfo);
         this.fileNodeMap.set(currentPath, fileInfo);
       } else if (node.children) {
-        // This is a directory node - process its children
-        node.children.forEach((child: any) => processNode(child, currentPath));
+        node.children.forEach((child: any) => processNode(child, currentPath, source));
       }
     };
 
-    processNode(treeData);
+    // Process main and referenced sections separately
+    if (treeData.children) {
+      const mainNode = treeData.children.find((c: any) => c.name === 'main');
+      const referencedNode = treeData.children.find((c: any) => c.name === 'referenced');
+
+      if (mainNode) {
+        processNode(mainNode, '', 'main');
+      }
+      if (referencedNode) {
+        processNode(referencedNode, '', 'referenced');
+      }
+    }
+
     this.files = files.sort((a, b) => a.fullPath.localeCompare(b.fullPath));
   }
 
@@ -194,7 +239,7 @@ export class TreemapComponent implements OnDestroy {
         id: data.ids[i],
         label: data.labels[i],
         value: data.values[i],
-        children: []
+        children: [],
       });
     }
 
@@ -334,8 +379,19 @@ export class TreemapComponent implements OnDestroy {
     this.loadTreemapData();
   }
 
+  private getNodeColor(included: boolean, source: string, isRoot: boolean = false): string {
+    if (isRoot) return '#f8fafc'; // Very light gray for root
+    if (!included) return '#94a3b8'; // Gray for excluded files
+
+    // Handle section headers (main/referenced)
+    if (source === 'main' && !included) return '#818cf8'; // Lighter indigo for main section
+    if (source === 'referenced' && !included) return '#86efac'; // Lighter green for referenced section
+
+    // Handle actual files
+    return source === 'main' ? '#4f46e5' : '#22c55e'; // Indigo for main, green for referenced files
+  }
+
   private renderTreemap(data: TreemapData) {
-    this.updateFilesList(data);
     const chartContainer = document.getElementById('file-treemap');
     if (!chartContainer) {
       console.warn('Chart container not found');
@@ -344,57 +400,11 @@ export class TreemapComponent implements OnDestroy {
 
     // Build tree structure and calculate file counts
     const nodeMap = this.buildTree(data);
-    const fileCountMap = new Map<string, number>();
-    const inclusionStatusMap = new Map<string, string>();  // Added this line
-
-    // Calculate file counts for each node
-    for (const [id, node] of nodeMap) {
-      fileCountMap.set(id, this.countFiles(node));
-    }
-
-    // Process nodes to calculate file counts and inclusion status
-    const processNode = (id: string) => {
-      const node = nodeMap.get(id);
-      if (!node) return;
-
-      // Calculate file count
-      fileCountMap.set(id, this.countFiles(node));
-
-      // Calculate inclusion status by checking the original tree data
-      let treeNode = this.findNodeInTree(this.originalTreeData, node.label);
-      if (treeNode) {
-        inclusionStatusMap.set(id, this.getNodeInclusionStatus(treeNode));
-      }
-
-      // Process children
-      node.children.forEach(child => processNode(child.id));
-    };
-
-    // Start processing from root nodes (nodes with no parents)
-    data.ids.forEach((id, index) => {
-      if (!data.parents[index]) {
-        processNode(id);
-      }
-    });
-    // Create custom text array for hover info
-    const customData = data.ids.map((id, index) => ({
-      fileCount: fileCountMap.get(id) || 0,
-      sizeFormatted: this.formatSizeForHover(nodeMap.get(id)?.value || 0),
-      included: inclusionStatusMap.get(id),
-      isFile: !nodeMap.get(id)?.children?.length
-    }));
-
-    // Create color array based on included status
-    const colors = data.ids.map(id => {
-      const status = inclusionStatusMap.get(id);
-      switch (status) {
-        case 'included':
-          return '#4f46e5'; // Indigo for included
-        case 'partial':
-          return '#eab308'; // Yellow for partially included
-        default:
-          return '#94a3b8'; // Gray for excluded
-      }
+    const colors = data.labels.map((label: string, index: number) => {
+      const customData = (data as any).customdata[index];
+      const isRoot = label === 'root';
+      const isMainOrReferenced = label === 'main' || label === 'referenced';
+      return this.getNodeColor(data.included[index], customData.source, isRoot || isMainOrReferenced);
     });
 
     const plotlyData = [{
@@ -405,12 +415,13 @@ export class TreemapComponent implements OnDestroy {
       values: data.values,
       ids: data.ids,
       textinfo: 'label',
-      customdata: customData,
+      customdata: (data as any).customdata,
       hovertemplate: `
 <b>%{label}</b><br>
 Size: %{customdata.sizeFormatted}<br>
 Files: %{customdata.fileCount}<br>
-Status: %{customdata.included}<br>
+Source: %{customdata.source}<br>
+Status: %{customdata.included ? 'Included' : 'Excluded'}<br>
 <extra></extra>`,
       marker: {
         colors: colors,

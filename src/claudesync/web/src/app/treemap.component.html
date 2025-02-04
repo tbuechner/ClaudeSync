@@ -63,6 +63,7 @@
             <th>Path</th>
             <th>File Name</th>
             <th>Size</th>
+            <th>Source</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -72,6 +73,7 @@
             <td>{{ file.path || '/' }}</td>
             <td>{{ file.name }}</td>
             <td>{{ formatSize(file.size) }}</td>
+            <td>{{ file.source }}</td>
             <td [class.included]="file.included">
               {{ file.included ? 'Included' : 'Excluded' }}
             </td>

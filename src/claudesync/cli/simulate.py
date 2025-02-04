@@ -28,52 +28,105 @@ class TreeNode(TypedDict):
     children: Optional[List['TreeNode']]
     included: Optional[bool]
 
-def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files_config) -> dict:
+def build_file_tree(files_to_sync: Dict[str, FileInfo], config) -> dict:
     """
-    Build a hierarchical tree structure from the list of files with support for multiple roots.
+    Build a hierarchical tree structure from the list of files.
 
     Args:
-        base_path: The root directory path
-        files_to_sync: Dictionary of relative file paths and their hashes
+        files_to_sync: Dictionary mapping file paths to FileInfo objects
         config: Configuration manager instance
 
     Returns:
-        dict: Root node of the tree structure with support for multiple roots
+        dict: Root node of the tree structure with main and referenced sections
     """
-    logger = logging.getLogger(__name__)
-
-    use_ignore_files = files_config.get("use_ignore_files", True)
-
-    # Get sync filters
-    gitignore = load_gitignore(base_path) if use_ignore_files else None
-    claudeignore = load_claudeignore(base_path) if use_ignore_files else None
-
-    # Create root node
+    # Create root structure
     root = {
         'name': 'root',
-        'children': []
+        'children': [
+            {'name': 'main', 'children': [], 'included': True},  # Always include mandatory sections
+            {'name': 'referenced', 'children': [], 'included': True}
+        ]
     }
 
-    # Get push_roots from project config
-    project_config = config.get_files_config(config.get_active_project()[0])
-    push_roots = project_config.get('push_roots', [])
+    # Group files by source and project
+    main_files = {}
+    referenced_projects = {}
 
-    # Create a set of files that will be synced for quick lookup
-    sync_files = set(files_to_sync.keys())
+    for path, file_info in files_to_sync.items():
+        if file_info.source == FileSource.MAIN:
+            main_files[path] = file_info
+        else:
+            # Group by project_id
+            project_id = file_info.project_id or 'unknown'
+            if project_id not in referenced_projects:
+                referenced_projects[project_id] = {}
+            referenced_projects[project_id][path] = file_info
 
-    if not push_roots:
-        # Original behavior - use base_path as single root
-        process_root(base_path, '', root, sync_files, gitignore, claudeignore)
-    else:
-        # Process each specified root directory
-        for root_dir in push_roots:
-            full_root_path = os.path.join(base_path, root_dir)
-            if not os.path.exists(full_root_path):
-                logger.warning(f"Specified root path does not exist: {full_root_path}")
-                continue
+    def add_to_tree(file_path: str, file_info: FileInfo, parent_node: dict):
+        """Add a file to the tree structure."""
+        path_parts = Path(file_path).parts
+        current = parent_node
 
-            # Process files under this root
-            process_root(full_root_path, root_dir, root, sync_files, gitignore, claudeignore)
+        # Navigate/build the tree structure
+        for i, part in enumerate(path_parts[:-1]):
+            # Find or create directory node
+            child = next((c for c in current['children'] if c['name'] == part), None)
+            if child is None:
+                child = {
+                    'name': part,
+                    'children': [],
+                    'included': True  # Default to included for directories
+                }
+                current['children'].append(child)
+            current = child
+
+        # Get file size
+        try:
+            file_size = os.path.getsize(os.path.join(file_info.root_path, file_path))
+        except OSError:
+            file_size = 0
+
+        # Add the file node
+        current['children'].append({
+            'name': path_parts[-1],
+            'size': file_size,
+            'included': True  # Files in sync list are included
+        })
+
+    # Process main project files
+    main_node = root['children'][0]  # Get 'main' node
+    for path, file_info in main_files.items():
+        add_to_tree(path, file_info, main_node)
+
+    # Process referenced project files
+    referenced_node = root['children'][1]  # Get 'referenced' node
+    for project_id, project_files in referenced_projects.items():
+        # Create a node for each referenced project
+        project_node = {
+            'name': f'Project {project_id}',
+            'children': [],
+            'included': True
+        }
+        referenced_node['children'].append(project_node)
+
+        # Add files for this project
+        for path, file_info in project_files.items():
+            add_to_tree(path, file_info, project_node)
+
+    # Add placeholders if sections are empty
+    if not main_node['children']:
+        main_node['children'].append({
+            'name': 'No files',
+            'size': 0,
+            'included': False
+        })
+
+    if not referenced_node['children']:
+        referenced_node['children'].append({
+            'name': 'No referenced projects',
+            'size': 0,
+            'included': False
+        })
 
     return root
 
@@ -531,7 +584,7 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 
     def _get_treemap(self, local_path, files_to_sync, config, files_config):
         """Generate treemap data"""
-        tree = build_file_tree(local_path, files_to_sync, config, files_config)
+        tree = build_file_tree(files_to_sync, config)
         return tree
 
 @click.command()
