@@ -105,82 +105,128 @@ export class TreemapComponent implements OnDestroy {
 
   private flattenTree(rootNode: any): TreemapData {
     const data: TreemapData = {
-      labels: ['root', 'main', 'referenced'],  // Start with mandatory nodes
-      parents: ['', 'root', 'root'],          // Define parent relationships
-      values: [0, 0, 0],                      // Initial values will be calculated
-      ids: ['root', 'main', 'referenced'],    // Node IDs
-      included: [true, true, true]            // All sections are included
+      labels: ['root', 'main', 'referenced'],
+      parents: ['', 'root', 'root'],
+      values: [0, 0, 0],
+      ids: ['root', 'main', 'referenced'],
+      included: [true, true, true]
     };
     (data as any).customdata = [
-      { fileCount: 0, source: '', isRoot: true, isSection: false },
-      { fileCount: 0, source: 'main', isRoot: false, isSection: true },
-      { fileCount: 0, source: 'referenced', isRoot: false, isSection: true }
+      { fileCount: 0, source: '', isRoot: true, isSection: false, sizeFormatted: '0 B' },
+      { fileCount: 0, source: 'main', isRoot: false, isSection: true, sizeFormatted: '0 B' },
+      { fileCount: 0, source: 'referenced', isRoot: false, isSection: true, sizeFormatted: '0 B' }
     ];
 
     // Calculate total size for a node and all its children
-    const calculateTotalSize = (node: any): number => {
+    const calculateNodeSize = (node: any): number => {
       if (!node) return 0;
-      if ('size' in node) return node.size;
-      if (!node.children) return 0;
-      return node.children.reduce((sum: number, child: any) => sum + calculateTotalSize(child), 0);
-    };
+      let totalSize = node.size || 0;
 
-    const processNode = (node: any, parentId: string, source: string): number => {
-      if (!node || node.name === 'root' || node.name === 'main' || node.name === 'referenced') return 0;
-
-      const currentId = parentId ? `${parentId}/${node.name}` : node.name;
-      const nodeSize = node.size || 0;
-      let totalSize = nodeSize;
-
-      // Process children first to calculate total size
       if (node.children) {
-        // @ts-ignore
-        node.children.forEach(child => {
-          totalSize += processNode(child, currentId, source);
+        node.children.forEach((child: any) => {
+          totalSize += calculateNodeSize(child);
         });
       }
 
-      // Add node to data arrays
-      data.labels.push(node.name);
-      data.parents.push(parentId);
-      data.ids.push(currentId);
-      data.values.push(totalSize);  // Use accumulated total size
-      data.included.push(node.included !== false);
+      return totalSize;
+    };
 
-      // Add custom data
-      (data as any).customdata.push({
+    const processNode = (node: any, parentId: string, source: string): number => {
+      if (!node) return 0;
+      if (node.name === 'root' || node.name === 'main' || node.name === 'referenced') return 0;
+
+      const currentId = parentId ? `${parentId}/${node.name}` : node.name;
+
+      // Calculate the total size of this node and all its children
+      const totalSize = calculateNodeSize(node);
+      console.log(`Calculated total size for ${node.name}:`, totalSize);
+
+      // Create complete customdata object
+      const customDataObject = {
         fileCount: node.children ? node.children.length : 0,
         sizeFormatted: this.formatSizeForHover(totalSize),
         included: node.included !== false,
         isFile: !node.children || node.children.length === 0,
         source: source
-      });
+      };
 
-      return totalSize;  // Return total size for parent calculation
+      // Add all data at once
+      data.labels.push(node.name);
+      data.parents.push(parentId);
+      data.ids.push(currentId);
+      data.values.push(totalSize);
+      data.included.push(node.included !== false);
+      (data as any).customdata.push(customDataObject);
+
+      // Process children
+      if (node.children && node.children.length > 0) {
+        console.log(`Processing ${node.children.length} children for ${node.name}`);
+        // @ts-ignore
+        node.children.forEach(child => {
+          processNode(child, currentId, source);
+        });
+      }
+
+      return totalSize;
     };
 
     // Process main section
-    // @ts-ignore
-    const mainNode = rootNode.children?.find(c => c.name === 'main');
+    const mainNode = rootNode.children?.find((c: any) => c.name === 'main');
     if (mainNode?.children) {
       // @ts-ignore
-      const mainTotal = mainNode.children.reduce((sum, child) =>
-        sum + processNode(child, 'main', 'main'), 0);
-      data.values[1] = mainTotal;  // Update main section total
+      const mainTotal = mainNode.children.reduce((sum, child) => {
+        return sum + processNode(child, 'main', 'main');
+      }, 0);
+      data.values[1] = mainTotal;
+      (data as any).customdata[1].sizeFormatted = this.formatSizeForHover(mainTotal);
     }
 
     // Process referenced section
-    // @ts-ignore
-    const referencedNode = rootNode.children?.find(c => c.name === 'referenced');
+    const referencedNode = rootNode.children?.find((c: any) => c.name === 'referenced');
     if (referencedNode?.children) {
-      // @ts-ignore
-      const referencedTotal = referencedNode.children.reduce((sum, child) =>
-        sum + processNode(child, 'referenced', 'referenced'), 0);
-      data.values[2] = referencedTotal;  // Update referenced section total
+      let referencedTotal = 0;
+
+      referencedNode.children.forEach((projectNode: any) => {
+        const projectId = projectNode.name;
+        const projectNodeId = `referenced/${projectId}`;
+
+        // Calculate total project size first
+        const projectTotal = calculateNodeSize(projectNode);
+        console.log(`Project ${projectId} calculated total size:`, projectTotal);
+
+        // Add project node
+        data.labels.push(projectId);
+        data.parents.push('referenced');
+        data.ids.push(projectNodeId);
+        data.values.push(projectTotal);
+        data.included.push(projectNode.included !== false);
+        (data as any).customdata.push({
+          fileCount: projectNode.children?.length || 0,
+          source: 'referenced',
+          isRoot: false,
+          isSection: true,
+          sizeFormatted: this.formatSizeForHover(projectTotal)
+        });
+
+        // Process project's files
+        if (projectNode.children) {
+          // @ts-ignore
+          projectNode.children.forEach(child => {
+            processNode(child, projectNodeId, `referenced/${projectId}`);
+          });
+        }
+
+        referencedTotal += projectTotal;
+      });
+
+      // Update referenced section total
+      data.values[2] = referencedTotal;
+      (data as any).customdata[2].sizeFormatted = this.formatSizeForHover(referencedTotal);
     }
 
-    // Update root value as sum of main and referenced
+    // Update root value as sum of all sections
     data.values[0] = data.values[1] + data.values[2];
+    (data as any).customdata[0].sizeFormatted = this.formatSizeForHover(data.values[0]);
 
     return data;
   }

@@ -52,15 +52,28 @@ def build_file_tree(files_to_sync: Dict[str, FileInfo], config) -> dict:
     main_files = {}
     referenced_projects = {}
 
+    logger.debug("Starting to group files by source and project")
+
     for path, file_info in files_to_sync.items():
+        logger.debug(f"Processing file: {path}")
+        logger.debug(f"Source: {file_info.source}, Project ID: {file_info.project_id}")
+
         if file_info.source == FileSource.MAIN:
             main_files[path] = file_info
+            logger.debug("Added to main files")
         else:
             # Group by project_id
             project_id = file_info.project_id or 'unknown'
             if project_id not in referenced_projects:
                 referenced_projects[project_id] = {}
+                logger.debug(f"Created new referenced project group: {project_id}")
             referenced_projects[project_id][path] = file_info
+            logger.debug(f"Added to referenced project: {project_id}")
+
+    logger.debug(f"Found {len(main_files)} main files")
+    logger.debug(f"Found {len(referenced_projects)} referenced projects")
+    for project_id, files in referenced_projects.items():
+        logger.debug(f"Project {project_id}: {len(files)} files")
 
     def add_to_tree(file_path: str, file_info: FileInfo, parent_node: dict):
         """Add a file to the tree structure."""
@@ -100,18 +113,29 @@ def build_file_tree(files_to_sync: Dict[str, FileInfo], config) -> dict:
 
     # Process referenced project files
     referenced_node = root['children'][1]  # Get 'referenced' node
-    for project_id, project_files in referenced_projects.items():
-        # Create a node for each referenced project
-        project_node = {
-            'name': f'Project {project_id}',
-            'children': [],
-            'included': True
-        }
-        referenced_node['children'].append(project_node)
+    logger.debug("Processing referenced projects for treemap")
 
-        # Add files for this project
-        for path, file_info in project_files.items():
-            add_to_tree(path, file_info, project_node)
+    for project_id, project_files in referenced_projects.items():
+        logger.debug(f"Creating node for project {project_id} with {len(project_files)} files")
+
+        try:
+            # Create a node for each referenced project
+            project_node = {
+                'name': project_id,  # Use actual project ID instead of "Project" prefix
+                'children': [],
+                'included': True
+            }
+            referenced_node['children'].append(project_node)
+
+            # Add files for this project
+            for path, file_info in project_files.items():
+                logger.debug(f"Adding file to project {project_id}: {path}")
+                try:
+                    add_to_tree(path, file_info, project_node)
+                except Exception as e:
+                    logger.error(f"Error adding file {path} to project {project_id}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing project {project_id}: {str(e)}")
 
     # Add placeholders if sections are empty
     if not main_node['children']:
