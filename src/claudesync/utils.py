@@ -21,37 +21,97 @@ class FileSource:
 
 class FileInfo:
     """Information about a collected file."""
-    def __init__(self, path: str, hash: str, source: str, project_id: Optional[str] = None, root_path: Optional[str] = None):
+    def __init__(self, path: str, hash: str, source: str, project_id: Optional[str] = None, root_path: Optional[str] = None, included: bool = True):
         self.path = path
         self.hash = hash
         self.source = source
         self.project_id = project_id
         self.root_path = root_path  # Store the root path for this file
+        self.included = included
 
-def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, FileInfo]:
+def is_file_included(rel_path: str,
+                   include_spec: pathspec.PathSpec,
+                   exclude_spec: Optional[pathspec.PathSpec],
+                   gitignore: Optional[pathspec.PathSpec],
+                   claudeignore: Optional[pathspec.PathSpec],
+                   category_excludes: Optional[pathspec.PathSpec],
+                   use_ignore_files: bool = True) -> bool:
     """
-    Get local files matching patterns in files configuration, including referenced projects.
+    Determine if a file should be included based on various patterns and ignore files.
 
     Args:
-        config: Configuration manager instance
-        root_path: Root path of the main project
-        files_config: Files configuration dictionary
+        rel_path: Relative path of the file
+        include_spec: PathSpec for inclusion patterns
+        exclude_spec: PathSpec for exclusion patterns
+        gitignore: PathSpec for gitignore patterns
+        claudeignore: PathSpec for claudeignore patterns
+        category_excludes: PathSpec for category-specific excludes
+        use_ignore_files: Whether to use .gitignore and .claudeignore
 
     Returns:
-        Dict mapping file paths to FileInfo objects
+        bool: True if the file should be included, False otherwise
     """
+    # Check inclusion patterns first
+    if not include_spec.match_file(rel_path):
+        logger.debug(f"File {rel_path} not matched by include patterns")
+        return False
+
+    # Check exclusion patterns
+    if exclude_spec and exclude_spec.match_file(rel_path):
+        logger.debug(f"File {rel_path} matched by exclude patterns")
+        return False
+
+    # Check ignore files if enabled
+    if use_ignore_files:
+        if gitignore and gitignore.match_file(rel_path):
+            logger.debug(f"File {rel_path} matched by gitignore")
+            return False
+
+        if claudeignore and claudeignore.match_file(rel_path):
+            logger.debug(f"File {rel_path} matched by claudeignore")
+            return False
+
+    # Check category excludes
+    if category_excludes and category_excludes.match_file(rel_path):
+        logger.debug(f"File {rel_path} matched by category excludes")
+        return False
+
+    return True
+
+def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, FileInfo]:
+    """Get local files matching patterns in files configuration."""
     logger.debug(f"Starting file collection from {root_path}")
 
-    # Collect files from main project
+    # Initialize ignore specs
+    use_ignore_files = files_config.get("use_ignore_files", True)
+    gitignore = load_gitignore(root_path) if use_ignore_files else None
+    claudeignore = load_claudeignore(root_path) if use_ignore_files else None
+
+    # Initialize pattern specs
+    includes = files_config.get('includes', ['*'])
+    excludes = files_config.get('excludes', [])
+    include_spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
+    exclude_spec = pathspec.PathSpec.from_lines("gitwildmatch", excludes) if excludes else None
+
+    logger.debug(f"Main project configuration:")
+    logger.debug(f"  Include patterns: {includes}")
+    logger.debug(f"  Exclude patterns: {excludes}")
+
+    # Collect main project files
     main_files = _collect_project_files(
         config,
         root_path,
         files_config,
-        FileSource.MAIN
+        FileSource.MAIN,
+        include_spec=include_spec,
+        exclude_spec=exclude_spec,
+        gitignore=gitignore,
+        claudeignore=claudeignore,
+        category_excludes=None,
+        use_ignore_files=use_ignore_files
     )
-    logger.debug(f"Collected {len(main_files)} files from main project")
 
-    # Get referenced projects
+    # Handle referenced projects
     references = files_config.get('references', [])
     if not references:
         return main_files
@@ -60,111 +120,212 @@ def get_local_files(config, root_path: str, files_config: dict) -> Dict[str, Fil
     try:
         active_project = config.get_active_project()[0]
         reference_paths = config._get_reference_paths(active_project)
-    except ConfigurationError:
-        logger.error("Failed to get reference paths")
+    except Exception as e:
+        logger.error(f"Error getting reference paths: {e}")
         return main_files
 
-    # Collect files from referenced projects
+    logger.debug(f"Processing {len(references)} referenced projects: {references}")
+
+    # Process each referenced project
     all_files = main_files.copy()
     for ref_id in references:
-        if ref_id not in reference_paths:
-            logger.warning(f"No path found for referenced project {ref_id}")
+        logger.debug(f"\nProcessing referenced project: {ref_id}")
+        try:
+            ref_files = _collect_referenced_files(
+                config,
+                ref_id,
+                reference_paths,
+                use_ignore_files
+            )
+
+            # Add non-duplicate referenced files
+            for path, file_info in ref_files.items():
+                if path not in all_files:
+                    all_files[path] = file_info
+                    logger.debug(f"Added file from {ref_id}: {path}")
+
+        except Exception as e:
+            logger.error(f"Error processing reference {ref_id}: {e}")
+            logger.exception("Full error:")
             continue
 
+    return all_files
+
+def _collect_referenced_files(config,
+                              ref_id: str,
+                              reference_paths: Dict[str, str],
+                              use_ignore_files: bool) -> Dict[str, FileInfo]:
+    """
+    Collect files from a referenced project using its own configuration.
+    """
+    if ref_id not in reference_paths:
+        logger.warning(f"No path found for referenced project {ref_id}")
+        return {}
+
+    try:
+        # Load referenced project config
         ref_config = config._load_referenced_project_config(ref_id, reference_paths)
         if not ref_config:
             logger.warning(f"Failed to load config for referenced project {ref_id}")
-            continue
+            return {}
 
-        try:
-            # Load referenced project config
-            ref_config_path = Path(reference_paths[ref_id])
-            ref_root = ref_config_path.parent.parent  # Move up from .claudesync/config.json
+        # Get root path for referenced project
+        ref_config_path = Path(reference_paths[ref_id])
+        ref_root = ref_config_path.parent.parent  # Move up from .claudesync/config.json
+        logger.debug(f"Referenced project {ref_id} root path: {ref_root}")
 
-            ref_config = config._load_referenced_project_config(ref_id, reference_paths)
-            if not ref_config:
-                logger.warning(f"Failed to load config for referenced project {ref_id}")
+        # Get patterns from referenced project's config
+        includes = ref_config.get('includes', ['*'])
+        excludes = ref_config.get('excludes', [])
+
+        logger.debug(f"Referenced project {ref_id} patterns:")
+        logger.debug(f"  Includes: {includes}")
+        logger.debug(f"  Excludes: {excludes}")
+
+        # Create PathSpec objects
+        include_spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
+        exclude_spec = pathspec.PathSpec.from_lines("gitwildmatch", excludes) if excludes else None
+
+        # Load ignore files for referenced project
+        gitignore = load_gitignore(str(ref_root)) if use_ignore_files else None
+        claudeignore = load_claudeignore(str(ref_root)) if use_ignore_files else None
+
+        # Get push roots from include patterns if not specified
+        push_roots = ref_config.get('push_roots', [])
+        if not push_roots:
+            # Extract base directory from include patterns
+            for pattern in includes:
+                base_dir = pattern.split('/')[0]
+                if base_dir and base_dir not in push_roots:
+                    push_roots.append(base_dir)
+
+        # If still no push roots, use project root
+        roots_to_traverse = [os.path.join(str(ref_root), root) for root in push_roots] if push_roots else [str(ref_root)]
+        logger.debug(f"Roots to traverse: {roots_to_traverse}")
+
+        files = {}
+        files_found = 0
+        files_included = 0
+
+        for base_root in roots_to_traverse:
+            if not os.path.exists(base_root):
+                logger.warning(f"Root path does not exist: {base_root}")
                 continue
 
-            logger.debug(f"Processing referenced project {ref_id} at {ref_root}")
+            for root, dirs, filenames in os.walk(base_root, topdown=True):
+                # Get path relative to project root for pattern matching
+                rel_root = os.path.relpath(root, str(ref_root))
 
-            # Collect files from referenced project using its root
-            ref_files = _collect_project_files(
-                config,
-                str(ref_root),
-                ref_config,
-                FileSource.REFERENCED,
-                ref_id
-            )
-            logger.debug(f"Collected {len(ref_files)} files from referenced project {ref_id}")
+                # Filter directories to avoid unnecessary traversal
+                dirs[:] = [d for d in dirs if d not in {".git", ".svn", ".hg", ".bzr", "_darcs", "CVS", "claude_chats", ".claudesync"}]
 
-            # Handle duplicates (main project files take precedence)
-            for path, file_info in ref_files.items():
-                if path not in all_files:
-                    file_info.root_path = str(ref_root)  # Store the root path
-                    all_files[path] = file_info
-                else:
-                    logger.debug(f"Skipping duplicate file from reference: {path}")
+                # Apply ignore files if enabled
+                if use_ignore_files:
+                    dirs[:] = [
+                        d for d in dirs
+                        if not should_skip_directory(
+                            os.path.join(root, d),
+                            str(ref_root),
+                            gitignore,
+                            claudeignore,
+                            None
+                        )
+                    ]
 
-        except Exception as e:
-            logger.error(f"Error processing referenced project {ref_id}: {e}")
-            continue
+                for filename in filenames:
+                    try:
+                        abs_path = os.path.join(root, filename)
+                        rel_path = os.path.relpath(abs_path, str(ref_root))
+                        files_found += 1
 
-    logger.debug(f"Total files collected: {len(all_files)}")
-    return all_files
+                        # Check if file matches include pattern
+                        matches_include = include_spec.match_file(rel_path)
+                        matches_exclude = exclude_spec.match_file(rel_path) if exclude_spec else False
 
-def _collect_project_files(
-        config,
-        root_path: str,
-        files_config: dict,
-        source: str,
-        project_id: Optional[str] = None
-) -> Dict[str, FileInfo]:
-    """
-    Collect files from a single project (main or referenced).
+                        if matches_include and not matches_exclude:
+                            if should_process_file(
+                                    config,
+                                    abs_path,
+                                    filename,
+                                    gitignore if use_ignore_files else None,
+                                    str(ref_root),
+                                    claudeignore if use_ignore_files else None,
+                                    None
+                            ):
+                                file_hash = process_file(abs_path)
+                                if file_hash:
+                                    files[rel_path] = FileInfo(
+                                        path=rel_path,
+                                        hash=file_hash,
+                                        source=FileSource.REFERENCED,
+                                        project_id=ref_id,
+                                        root_path=str(ref_root),
+                                        included=True
+                                    )
+                                    files_included += 1
+                                    logger.debug(f"Included file: {rel_path}")
 
-    Args:
-        config: Configuration manager instance
-        root_path: Root path of the project
-        files_config: Files configuration dictionary
-        source: Source identifier (main or referenced)
-        project_id: Optional project ID for referenced projects
+                    except Exception as e:
+                        logger.error(f"Error processing file {filename}: {e}")
+                        continue
 
-    Returns:
-        Dict mapping file paths to FileInfo objects
-    """
-    use_ignore_files = files_config.get("use_ignore_files", True)
-    gitignore = load_gitignore(root_path) if use_ignore_files else None
-    claudeignore = load_claudeignore(root_path) if use_ignore_files else None
+        logger.debug(f"Project {ref_id} summary:")
+        logger.debug(f"  Files found: {files_found}")
+        logger.debug(f"  Files included: {files_included}")
+        logger.debug(f"  Files matched patterns: {len(files)}")
 
+        return files
+
+    except Exception as e:
+        logger.error(f"Error collecting files for referenced project {ref_id}: {str(e)}")
+        logger.exception("Full error:")
+        return {}
+
+def _collect_project_files(config,
+                           root_path: str,
+                           files_config: dict,
+                           source: str,
+                           include_spec: pathspec.PathSpec,
+                           exclude_spec: Optional[pathspec.PathSpec],
+                           gitignore: Optional[pathspec.PathSpec],
+                           claudeignore: Optional[pathspec.PathSpec],
+                           category_excludes: Optional[pathspec.PathSpec],
+                           use_ignore_files: bool,
+                           project_id: Optional[str] = None) -> Dict[str, FileInfo]:
+    """Collect files from a single project directory."""
     files = {}
     exclude_dirs = {".git", ".svn", ".hg", ".bzr", "_darcs", "CVS", "claude_chats", ".claudesync"}
+    files_found = 0
+    files_included = 0
 
     # Get push_roots from configuration
     push_roots = files_config.get("push_roots", [])
-    includes = files_config.get("includes", ["*"])
-    excludes = files_config.get("excludes", [])
 
-    category_excludes = None
-    if excludes:
-        category_excludes = pathspec.PathSpec.from_lines("gitwildmatch", excludes)
+    # If no push_roots specified, try to derive from include patterns
+    if not push_roots and source == FileSource.MAIN:
+        includes = files_config.get('includes', ['*'])
+        # Extract base directories from include patterns
+        for pattern in includes:
+            if pattern == '*':
+                continue
+            base_dir = pattern.split('/')[0]  # This treats "*.py" as a directory
+            if base_dir and base_dir != '*' and base_dir not in push_roots:
+                push_roots.append(base_dir)
 
-    spec = pathspec.PathSpec.from_lines("gitwildmatch", includes)
-    logger.debug(f"Using root path: {root_path}")
-    logger.debug(f"Push roots: {push_roots}")
 
-    # Determine roots to traverse
     roots_to_traverse = [os.path.join(root_path, root) for root in push_roots] if push_roots else [root_path]
+    logger.debug(f"Traversing roots for {source}: {roots_to_traverse}")
 
     for base_root in roots_to_traverse:
         if not os.path.exists(base_root):
-            logger.warning(f"Specified root path does not exist: {base_root}")
+            logger.warning(f"Root path does not exist: {base_root}")
             continue
 
-        logger.debug(f"Traversing root: {base_root}")
-
         for root, dirs, filenames in os.walk(base_root, topdown=True):
-            # Filter out excluded directories
+            # Get path relative to project root for pattern matching
+            rel_root = os.path.relpath(root, root_path)
+
+            # Filter directories
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
             if use_ignore_files:
@@ -181,10 +342,19 @@ def _collect_project_files(
 
             for filename in filenames:
                 try:
+                    files_found += 1
                     abs_path = os.path.join(root, filename)
                     rel_path = os.path.relpath(abs_path, root_path)
 
-                    if spec.match_file(rel_path):
+                    # Check file against patterns
+                    matches_include = include_spec.match_file(rel_path)
+                    matches_exclude = exclude_spec.match_file(rel_path) if exclude_spec else False
+
+                    logger.debug(f"Checking file: {rel_path}")
+                    logger.debug(f"  Matches include: {matches_include}")
+                    logger.debug(f"  Matches exclude: {matches_exclude}")
+
+                    if matches_include and not matches_exclude:
                         if should_process_file(
                                 config,
                                 abs_path,
@@ -201,12 +371,19 @@ def _collect_project_files(
                                     hash=file_hash,
                                     source=source,
                                     project_id=project_id,
-                                    root_path=root_path
+                                    root_path=root_path,
+                                    included=True
                                 )
+                                files_included += 1
+                                logger.debug(f"Included file: {rel_path}")
+
                 except Exception as e:
                     logger.error(f"Error processing file {filename}: {e}")
                     continue
 
+    logger.debug(f"Collection summary for {source}:")
+    logger.debug(f"  Files found: {files_found}")
+    logger.debug(f"  Files included: {files_included}")
     return files
 
 def should_process_file(

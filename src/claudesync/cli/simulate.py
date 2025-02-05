@@ -31,126 +31,111 @@ class TreeNode(TypedDict):
 def build_file_tree(files_to_sync: Dict[str, FileInfo], config) -> dict:
     """
     Build a hierarchical tree structure from the list of files.
-
-    Args:
-        files_to_sync: Dictionary mapping file paths to FileInfo objects
-        config: Configuration manager instance
-
-    Returns:
-        dict: Root node of the tree structure with main and referenced sections
     """
-    # Create root structure
+    # Create root structure with main and referenced sections
     root = {
         'name': 'root',
         'children': [
-            {'name': 'main', 'children': [], 'included': True},  # Always include mandatory sections
+            {'name': 'main', 'children': [], 'included': True},
             {'name': 'referenced', 'children': [], 'included': True}
         ]
     }
+
+    # Get active project and its config
+    active_project = config.get_active_project()[0]
+    files_config = config.get_files_config(active_project)
+    reference_paths = config._get_reference_paths(active_project)
 
     # Group files by source and project
     main_files = {}
     referenced_projects = {}
 
     logger.debug("Starting to group files by source and project")
-
     for path, file_info in files_to_sync.items():
-        logger.debug(f"Processing file: {path}")
-        logger.debug(f"Source: {file_info.source}, Project ID: {file_info.project_id}")
-
         if file_info.source == FileSource.MAIN:
             main_files[path] = file_info
-            logger.debug("Added to main files")
         else:
-            # Group by project_id
             project_id = file_info.project_id or 'unknown'
             if project_id not in referenced_projects:
                 referenced_projects[project_id] = {}
-                logger.debug(f"Created new referenced project group: {project_id}")
             referenced_projects[project_id][path] = file_info
-            logger.debug(f"Added to referenced project: {project_id}")
-
-    logger.debug(f"Found {len(main_files)} main files")
-    logger.debug(f"Found {len(referenced_projects)} referenced projects")
-    for project_id, files in referenced_projects.items():
-        logger.debug(f"Project {project_id}: {len(files)} files")
 
     def add_to_tree(file_path: str, file_info: FileInfo, parent_node: dict):
-        """Add a file to the tree structure."""
         path_parts = Path(file_path).parts
         current = parent_node
 
-        # Navigate/build the tree structure
+        # Build directory structure
         for i, part in enumerate(path_parts[:-1]):
-            # Find or create directory node
             child = next((c for c in current['children'] if c['name'] == part), None)
             if child is None:
                 child = {
                     'name': part,
                     'children': [],
-                    'included': True  # Default to included for directories
+                    'included': True  # Directories are always shown
                 }
                 current['children'].append(child)
             current = child
 
-        # Get file size
+        # Get file size from root path
         try:
             file_size = os.path.getsize(os.path.join(file_info.root_path, file_path))
         except OSError:
             file_size = 0
 
-        # Add the file node
+        # Add file node with inclusion status from FileInfo
         current['children'].append({
             'name': path_parts[-1],
             'size': file_size,
-            'included': True  # Files in sync list are included
+            'included': file_info.included
         })
 
     # Process main project files
-    main_node = root['children'][0]  # Get 'main' node
+    main_node = root['children'][0]
     for path, file_info in main_files.items():
         add_to_tree(path, file_info, main_node)
 
-    # Process referenced project files
-    referenced_node = root['children'][1]  # Get 'referenced' node
-    logger.debug("Processing referenced projects for treemap")
+    # Process referenced projects
+    referenced_node = root['children'][1]
 
+    # Get all referenced projects from configuration
+    references = files_config.get('references', [])
+
+    # Create nodes for each referenced project, even if no files
+    for ref_id in references:
+        if ref_id not in referenced_projects:
+            referenced_projects[ref_id] = {}  # Empty dict for projects with no files
+
+    # Process referenced projects
     for project_id, project_files in referenced_projects.items():
-        logger.debug(f"Creating node for project {project_id} with {len(project_files)} files")
+        logger.debug(f"Processing referenced project {project_id}")
 
-        try:
-            # Create a node for each referenced project
-            project_node = {
-                'name': project_id,  # Use actual project ID instead of "Project" prefix
-                'children': [],
-                'included': True
-            }
-            referenced_node['children'].append(project_node)
+        # Create project node
+        project_node = {
+            'name': project_id,
+            'children': [],
+            'included': True  # Project nodes are always shown
+        }
+        referenced_node['children'].append(project_node)
 
-            # Add files for this project
-            for path, file_info in project_files.items():
-                logger.debug(f"Adding file to project {project_id}: {path}")
-                try:
-                    add_to_tree(path, file_info, project_node)
-                except Exception as e:
-                    logger.error(f"Error adding file {path} to project {project_id}: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error processing project {project_id}: {str(e)}")
+        # Add files for this project
+        for path, file_info in project_files.items():
+            add_to_tree(path, file_info, project_node)
 
-    # Add placeholders if sections are empty
-    if not main_node['children']:
-        main_node['children'].append({
-            'name': 'No files',
-            'size': 0,
-            'included': False
-        })
-
-    if not referenced_node['children']:
+    # Add placeholders only if no referenced projects are configured
+    if not references:
         referenced_node['children'].append({
             'name': 'No referenced projects',
             'size': 0,
             'included': False
         })
+    elif not referenced_node['children']:
+        # If we have references but no files, show empty project nodes
+        for ref_id in references:
+            referenced_node['children'].append({
+                'name': ref_id,
+                'children': [],
+                'included': True
+            })
 
     return root
 
