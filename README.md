@@ -164,7 +164,11 @@ The `xxx.project.json` file contains several properties that control how files a
 - `includes`: An array of file path patterns to include in the synchronization. These can use glob patterns like `*.js` or specify directories like `src/components`. Paths are relative to the project root, not to the push roots.
 - `excludes`: An array of file path patterns to exclude from synchronization. These patterns override matching patterns in the `includes` array. Paths are relative to the project root, not to the push roots.
 - `use_ignore_files`: Boolean value (true/false) that determines whether to use `.gitignore` and `.claudeignore` files for additional exclusion rules.
-- `push_roots`: An array of root directories to start the file search from. This is useful for large repositories where you only want to focus on specific subdirectories. Only files within these directories will be considered for synchronization, regardless of include patterns.
+- `push_roots`: An array of subdirectory paths where file synchronization should begin. This feature helps focus synchronization on specific parts of a large repository.
+  - Only specify directories, not individual files
+  - All paths are relative to the project root
+  - **Important:** This array must be empty if you need to synchronize files in the project root level, as files outside of specified push_roots directories are never synchronized
+  - Only files that are both within push_roots AND match an include pattern will be synchronized
 
 Example configuration:
 ```json
