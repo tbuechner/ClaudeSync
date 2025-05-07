@@ -31,7 +31,7 @@ export class TreemapComponent implements OnDestroy {
     }
   }
 
-  @Output() reloadRequired = new EventEmitter<void>();
+  @Output() reloadRequired = new EventEmitter<{showOnlyIncluded: boolean}>();
 
   selectedNode: SelectedNode | null = null;
   showOnlyIncluded = true;
@@ -100,12 +100,9 @@ export class TreemapComponent implements OnDestroy {
   public updateTreemap() {
     if (!this.originalTreeData) return;
 
-    const filteredData = this.filterTree(this.originalTreeData);
-    if (filteredData) {
-      const plotlyData = this.flattenTree(filteredData);
-      this.renderTreemap(plotlyData);
-      this.updateFilesList(this.originalTreeData);
-    }
+    const plotlyData = this.flattenTree(this.originalTreeData);
+    this.renderTreemap(plotlyData);
+    this.updateFilesList(this.originalTreeData);
   }
 
   private flattenTree(node: any, parentId: string = ''): TreemapData {
@@ -501,7 +498,8 @@ Status: %{customdata.included}<br>
   }
 
   onShowOnlyIncludedChange() {
-    this.updateTreemap();
+    // Emit the event with the current filter state
+    this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
   }
 
   handleNodeAction(action: string) {
@@ -553,8 +551,8 @@ Status: %{customdata.included}<br>
     this.fileDataService.updateConfigIncrementally(config)
       .subscribe({
         next: (response) => {
-          // Instead of refreshing cache here, emit up to parent
-          this.reloadRequired.emit();
+          // Pass the current filter state when triggering reload
+          this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
         },
         error: (error) => {
           console.error('Error updating configuration:', error);
@@ -603,7 +601,7 @@ Status: %{customdata.included}<br>
   }
 
   private processResolvedFiles(resolvedFiles: any[]): void {
-    // Extract all unique paths from resolved files
+// Extract all unique paths from resolved files
     const pathsToAdd: string[] = [];
 
     resolvedFiles.forEach(file => {
@@ -625,9 +623,9 @@ Status: %{customdata.included}<br>
       }, index * 200); // Stagger updates to avoid race conditions
     });
 
-    // After all paths are added, trigger a reload
+    // After all paths are added, trigger a reload with current filter
     setTimeout(() => {
-      this.reloadRequired.emit();
+      this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
     }, pathsToAdd.length * 200 + 300);
   }
 }

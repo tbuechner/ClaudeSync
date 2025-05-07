@@ -85,8 +85,8 @@ export class AppComponent implements OnInit {
     this.fileDataService.setActiveProject(projectPath)
       .subscribe({
         next: () => {
-          // After setting the project, trigger a full reload
-          this.reload();
+          // After setting the project, trigger a full reload with default filter setting
+          this.reload(true); // Use default filter (only included files)
         },
         error: (error) => {
           console.error('Error setting active project:', error);
@@ -105,7 +105,8 @@ export class AppComponent implements OnInit {
   }
 
   loadData() {
-    this.fileDataService.getSyncData()
+    // Default to true for showOnlyIncluded parameter (the UI default)
+    this.fileDataService.getSyncData(true)
       .subscribe({
         next: (data) => {
           this.syncData = data;
@@ -123,8 +124,8 @@ export class AppComponent implements OnInit {
     this.configVisible = !this.configVisible;
   }
 
-  reload() {
-    this.fileDataService.refreshCache()
+  reload(showOnlyIncluded: boolean = true) {
+    this.fileDataService.refreshCache(showOnlyIncluded)
       .subscribe({
         next: (data) => {
           // Create a new object reference to trigger change detection

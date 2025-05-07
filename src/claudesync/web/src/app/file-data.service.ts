@@ -1,5 +1,5 @@
 import {Injectable} from '@angular/core';
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpParams} from '@angular/common/http';
 import {Observable, of} from 'rxjs';
 import {map, tap} from 'rxjs/operators';
 import {Project} from './project-dropdown.component';
@@ -46,9 +46,12 @@ export class FileDataService {
 
   constructor(private http: HttpClient, private loadingService: LoadingService) {}
 
-  private getSyncDataFromApi(): Observable<SyncData> {
+  private getSyncDataFromApi(showOnlyIncluded: boolean = true): Observable<SyncData> {
+    // Create params object with the showOnlyIncluded parameter
+    const params = new HttpParams().set('showOnlyIncluded', showOnlyIncluded.toString());
+
     return this.loadingService.withLoading(
-      this.http.get<SyncData>(`${this.baseUrl}/sync-data`).pipe(
+      this.http.get<SyncData>(`${this.baseUrl}/sync-data`, { params }).pipe(
         tap(data => {
           this.cachedData = data;
           console.debug('Cached sync data updated');
@@ -56,11 +59,11 @@ export class FileDataService {
       ));
   }
 
-  getSyncData(): Observable<SyncData> {
+  getSyncData(showOnlyIncluded: boolean = true): Observable<SyncData> {
     if (this.cachedData) {
       return of(this.cachedData);
     }
-    return this.getSyncDataFromApi();
+    return this.getSyncDataFromApi(showOnlyIncluded);
   }
 
   getProjectConfig(): Observable<ProjectConfig> {
@@ -81,15 +84,15 @@ export class FileDataService {
     );
   }
 
-  getTreemapData(): Observable<any> {
-    return this.getSyncData().pipe(
+  getTreemapData(showOnlyIncluded: boolean = true): Observable<any> {
+    return this.getSyncData(showOnlyIncluded).pipe(
       map(data => data.treemap)
     );
   }
 
-  refreshCache(): Observable<SyncData> {
+  refreshCache(showOnlyIncluded: boolean = true): Observable<SyncData> {
     this.clearCache();
-    return this.getSyncData();
+    return this.getSyncData(showOnlyIncluded);
   }
 
   clearCache(): void {

@@ -76,7 +76,7 @@
 
         <section class="visualization-panel ">
           <app-treemap [syncData]="syncData"
-                       (reloadRequired)="reload()">
+                       (reloadRequired)="reload($event.showOnlyIncluded)">
           </app-treemap>
         </section>
       </main>
