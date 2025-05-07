@@ -35,6 +35,8 @@ export interface SyncData {
   project: ProjectConfig;
   stats: SyncStats;
   treemap: any;
+  timeout?: boolean;         // Indicates if the operation timed out
+  timeoutMessage?: string;   // Message explaining the timeout
 }
 
 @Injectable({

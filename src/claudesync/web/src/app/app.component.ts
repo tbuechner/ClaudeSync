@@ -36,6 +36,8 @@ export class AppComponent implements OnInit {
   };
 
   syncData: SyncData | null = null;
+  timeoutOccurred = false;
+  timeoutMessage = '';
 
   projects: Project[] = [];
   selectedProject: string = '';
@@ -70,6 +72,7 @@ export class AppComponent implements OnInit {
         },
         error: (error) => {
           console.error('Error loading projects:', error);
+          this.notificationService.error('Failed to load projects. Please try again.');
         }
       });
   }
@@ -82,6 +85,10 @@ export class AppComponent implements OnInit {
     // Clear the current data before loading new project
     this.fileDataService.clearCache();
 
+    // Reset timeout state when changing projects
+    this.timeoutOccurred = false;
+    this.timeoutMessage = '';
+
     this.fileDataService.setActiveProject(projectPath)
       .subscribe({
         next: () => {
@@ -90,6 +97,7 @@ export class AppComponent implements OnInit {
         },
         error: (error) => {
           console.error('Error setting active project:', error);
+          this.notificationService.error('Failed to set active project. Please try again.');
         }
       });
   }
@@ -113,9 +121,20 @@ export class AppComponent implements OnInit {
           this.projectConfig = data.project;
           this.claudeignore = data.claudeignore;
           this.stats = data.stats;
+
+          // Handle timeout condition
+          if (data.timeout) {
+            this.timeoutOccurred = true;
+            this.timeoutMessage = data.timeoutMessage || 'File traversal timed out. Your project may have too many files to process.';
+            this.notificationService.warning(this.timeoutMessage);
+          } else {
+            this.timeoutOccurred = false;
+            this.timeoutMessage = '';
+          }
         },
         error: (error) => {
           console.error('Error loading data:', error);
+          this.notificationService.error('Failed to load project data. Please try again.');
         }
       });
   }
@@ -133,9 +152,20 @@ export class AppComponent implements OnInit {
           this.projectConfig = data.project;
           this.claudeignore = data.claudeignore;
           this.stats = data.stats;
+
+          // Handle timeout condition
+          if (data.timeout) {
+            this.timeoutOccurred = true;
+            this.timeoutMessage = data.timeoutMessage || 'File traversal timed out. Your project may have too many files to process.';
+            this.notificationService.warning(this.timeoutMessage);
+          } else {
+            this.timeoutOccurred = false;
+            this.timeoutMessage = '';
+          }
         },
         error: (error) => {
           console.error('Error loading data:', error);
+          this.notificationService.error('Failed to reload project data. Please try again.');
         }
       });
   }
@@ -147,6 +177,13 @@ export class AppComponent implements OnInit {
   }
 
   push() {
+    // If timeout occurred, confirm before pushing
+    if (this.timeoutOccurred) {
+      if (!confirm('File traversal timed out, which means not all files may be included. Do you still want to push?')) {
+        return;
+      }
+    }
+
     this.fileDataService.push()
       .subscribe({
         next: (response) => {

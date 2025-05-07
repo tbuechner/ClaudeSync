@@ -26,8 +26,26 @@ export class TreemapComponent implements OnDestroy {
   @Input() set syncData(data: SyncData | null) {
     if (data) {
       console.debug('TreemapComponent received new syncData');
-      this.originalTreeData = data.treemap;
-      this.updateTreemap();
+
+      // Check if there was a timeout in file traversal
+      this.timeoutOccurred = data.timeout || false;
+      this.timeoutMessage = data.timeoutMessage || 'File traversal timed out.';
+
+      if (!this.timeoutOccurred) {
+        this.originalTreeData = data.treemap;
+        this.updateTreemap();
+      } else {
+        // Clear treemap data to avoid displaying stale information
+        this.originalTreeData = null;
+        this.files = [];
+        // Clear the treemap visualization
+        const chartContainer = document.getElementById('file-treemap');
+        if (chartContainer) {
+          Plotly.purge(chartContainer);
+        }
+        // Display message in the treemap area
+        this.renderTimeoutMessage(chartContainer);
+      }
     }
   }
 
@@ -35,7 +53,7 @@ export class TreemapComponent implements OnDestroy {
 
   selectedNode: SelectedNode | null = null;
   showOnlyIncluded = true;
-  showFileList = false
+  showFileList = false;
   private destroy$ = new Subject<void>();
   private baseUrl = 'http://localhost:4201/api';
 
@@ -49,6 +67,10 @@ export class TreemapComponent implements OnDestroy {
   private fileNodeMap = new Map<string, FileInfo>();
 
   filterText = '';
+
+  // New properties for timeout handling
+  timeoutOccurred = false;
+  timeoutMessage = '';
 
   private currentSubscription?: Subscription;
 
@@ -103,6 +125,71 @@ export class TreemapComponent implements OnDestroy {
     const plotlyData = this.flattenTree(this.originalTreeData);
     this.renderTreemap(plotlyData);
     this.updateFilesList(this.originalTreeData);
+  }
+
+  // New method to render timeout message
+  private renderTimeoutMessage(container: HTMLElement | null) {
+    if (!container) return;
+
+    // Create message element
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'timeout-message';
+    messageDiv.style.width = '100%';
+    messageDiv.style.height = '100%';
+    messageDiv.style.display = 'flex';
+    messageDiv.style.flexDirection = 'column';
+    messageDiv.style.alignItems = 'center';
+    messageDiv.style.justifyContent = 'center';
+    messageDiv.style.textAlign = 'center';
+    messageDiv.style.padding = '2rem';
+
+    // Create icon element
+    const iconDiv = document.createElement('div');
+    iconDiv.innerHTML = `
+      <svg viewBox="0 0 24 24" width="48" height="48" style="margin-bottom: 1rem; color: #f59e0b;">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"
+              fill="currentColor" />
+      </svg>
+    `;
+
+    // Create heading
+    const heading = document.createElement('h3');
+    heading.style.fontSize = '1.25rem';
+    heading.style.fontWeight = '600';
+    heading.style.marginBottom = '0.75rem';
+    heading.style.color = '#1e293b';
+    heading.textContent = 'File Traversal Timeout';
+
+    // Create message text
+    const message = document.createElement('p');
+    message.style.fontSize = '1rem';
+    message.style.color = '#64748b';
+    message.style.maxWidth = '600px';
+    message.textContent = this.timeoutMessage;
+
+    // Create suggestions
+    const suggestions = document.createElement('div');
+    suggestions.style.marginTop = '1.5rem';
+    suggestions.style.fontSize = '0.875rem';
+    suggestions.style.color = '#64748b';
+    suggestions.innerHTML = `
+      <p><strong>Suggestions:</strong></p>
+      <ul style="text-align: left; margin-top: 0.5rem;">
+        <li>Use more specific include patterns in your project configuration</li>
+        <li>Add more exclude patterns or update your .claudeignore file</li>
+        <li>If possible, specify push_roots for targeted synchronization</li>
+      </ul>
+    `;
+
+    // Assemble the message
+    messageDiv.appendChild(iconDiv);
+    messageDiv.appendChild(heading);
+    messageDiv.appendChild(message);
+    messageDiv.appendChild(suggestions);
+
+    // Clear and add to container
+    container.innerHTML = '';
+    container.appendChild(messageDiv);
   }
 
   private flattenTree(node: any, parentId: string = ''): TreemapData {
@@ -314,6 +401,12 @@ export class TreemapComponent implements OnDestroy {
       return;
     }
 
+    // Don't attempt to render if timeout occurred
+    if (this.timeoutOccurred) {
+      this.renderTimeoutMessage(chartContainer);
+      return;
+    }
+
     // Build tree structure and calculate file counts
     const nodeMap = this.buildTree(data);
     const fileCountMap = new Map<string, number>();
@@ -469,6 +562,12 @@ Status: %{customdata.included}<br>
   }
 
   viewFileContent(file: FileInfo) {
+    // Don't allow file viewing in timeout state
+    if (this.timeoutOccurred) {
+      this.notificationService.warning('File content cannot be viewed in timeout state');
+      return;
+    }
+
     this.selectedFile = file;
     this.fileContent = null;
     this.fileContentError = null;
@@ -498,12 +597,24 @@ Status: %{customdata.included}<br>
   }
 
   onShowOnlyIncludedChange() {
+    // Don't trigger changes in timeout state
+    if (this.timeoutOccurred) {
+      this.notificationService.warning('Cannot change view in timeout state');
+      return;
+    }
+
     // Emit the event with the current filter state
     this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
   }
 
   handleNodeAction(action: string) {
     if (!this.selectedNode) return;
+
+    // Disable actions in timeout state
+    if (this.timeoutOccurred && action !== 'copy') {
+      this.notificationService.warning('Cannot perform this action in timeout state');
+      return;
+    }
 
     // Remove the "root/" prefix if it exists
     const path = this.selectedNode.path.replace(/^root\//, '');
@@ -561,6 +672,12 @@ Status: %{customdata.included}<br>
   }
 
   onFilesDropped(files: DroppedFile[]): void {
+    // Disable file drop in timeout state
+    if (this.timeoutOccurred) {
+      this.notificationService.warning('Cannot process files in timeout state');
+      return;
+    }
+
     if (!files.length) return;
 
     this.notificationService.info(`Processing ${files.length} file(s)...`);
@@ -601,7 +718,7 @@ Status: %{customdata.included}<br>
   }
 
   private processResolvedFiles(resolvedFiles: any[]): void {
-// Extract all unique paths from resolved files
+    // Extract all unique paths from resolved files
     const pathsToAdd: string[] = [];
 
     resolvedFiles.forEach(file => {
