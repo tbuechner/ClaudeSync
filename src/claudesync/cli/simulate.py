@@ -35,24 +35,9 @@ class TreeNode(TypedDict):
 def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files_config, show_only_included: bool = True) -> dict:
     """
     Build a hierarchical tree structure from the list of files with support for multiple roots.
-
-    Args:
-        base_path: The root directory path
-        files_to_sync: Dictionary of relative file paths and their hashes
-        config: Configuration manager instance
-        files_config: Configuration for the file syncing
-        show_only_included: If True, only include files that will be synced
-
-    Returns:
-        dict: Root node of the tree structure with support for multiple roots
+    This optimized version avoids walking the entire directory tree when show_only_included=True
     """
     logger = logging.getLogger(__name__)
-
-    use_ignore_files = files_config.get("use_ignore_files", True)
-
-    # Get sync filters
-    gitignore = load_gitignore(base_path) if use_ignore_files else None
-    claudeignore = load_claudeignore(base_path) if use_ignore_files else None
 
     # Create root node
     root = {
@@ -60,26 +45,85 @@ def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files
         'children': []
     }
 
-    # Get push_roots from project config
-    project_config = config.get_files_config(config.get_active_project()[0])
-    push_roots = project_config.get('push_roots', [])
-
     # Create a set of files that will be synced for quick lookup
     sync_files = set(files_to_sync.keys())
 
-    if not push_roots:
-        # Original behavior - use base_path as single root
-        process_root(base_path, '', root, sync_files, gitignore, claudeignore, show_only_included)
-    else:
-        # Process each specified root directory
-        for root_dir in push_roots:
-            full_root_path = os.path.join(base_path, root_dir)
-            if not os.path.exists(full_root_path):
-                logger.warning(f"Specified root path does not exist: {full_root_path}")
+    if show_only_included:
+        # Optimized path: build tree directly from included files without directory walking
+        logger.debug(f"Using optimized tree building for {len(sync_files)} included files")
+
+        # Dictionary to track created directory nodes to avoid redundant creation
+        dir_nodes = {}
+
+        # Process each included file
+        for rel_path in sorted(sync_files):  # Sort for consistent results
+            full_path = os.path.join(base_path, rel_path)
+
+            # Skip if file doesn't exist anymore
+            if not os.path.exists(full_path):
                 continue
 
-            # Process files under this root
-            process_root(full_root_path, root_dir, root, sync_files, gitignore, claudeignore, show_only_included)
+            # Get file size
+            try:
+                file_size = os.path.getsize(full_path)
+            except OSError:
+                continue
+
+            # Build directory path in tree efficiently
+            path_parts = Path(rel_path).parts
+            file_name = path_parts[-1]
+            dir_path = path_parts[:-1]
+
+            # Ensure parent directories exist
+            current = root
+            current_path = []
+
+            for part in dir_path:
+                current_path.append(part)
+                path_key = '/'.join(current_path)
+
+                # Only create directory node if it doesn't exist yet
+                if path_key not in dir_nodes:
+                    dir_node = {
+                        'name': part,
+                        'children': []
+                    }
+                    current['children'].append(dir_node)
+                    dir_nodes[path_key] = dir_node
+
+                current = dir_nodes[path_key]
+
+            # Add the file node
+            current['children'].append({
+                'name': file_name,
+                'size': file_size,
+                'included': True  # All files in sync_files are included
+            })
+
+        logger.debug(f"Tree built with {len(dir_nodes)} directories")
+    else:
+        # Original behavior - walk the entire directory tree
+        use_ignore_files = files_config.get("use_ignore_files", True)
+        gitignore = load_gitignore(base_path) if use_ignore_files else None
+        claudeignore = load_claudeignore(base_path) if use_ignore_files else None
+
+        # Get push_roots from project config
+        project_config = config.get_files_config(config.get_active_project()[0])
+        push_roots = project_config.get('push_roots', [])
+
+        if not push_roots:
+            # Use base_path as single root
+            process_root(base_path, '', root, sync_files, gitignore, claudeignore, show_only_included)
+        else:
+            # Process each specified root directory
+            for root_dir in push_roots:
+                full_root_path = os.path.join(base_path, root_dir)
+                if not os.path.exists(full_root_path):
+                    logger.warning(f"Specified root path does not exist: {full_root_path}")
+                    continue
+
+                # Process files under this root
+                process_root(full_root_path, root_dir, root, sync_files, gitignore, claudeignore, show_only_included)
 
     return root
 
