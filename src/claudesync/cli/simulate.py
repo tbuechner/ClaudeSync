@@ -664,7 +664,7 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                     'claudeignore': load_claudeignore_as_string(self.config),
                     'project': files_config,
                     'stats': self._get_stats(local_path, files_to_sync),
-                    'treemap': self._get_treemap(local_path, files_to_sync, self.config, files_config, show_only_included)
+                    'treemap': build_file_tree(local_path, files_to_sync, self.config, files_config, show_only_included)
                 }
 
                 self.wfile.write(json.dumps(response_data).encode())
@@ -721,11 +721,6 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
             "filesToSync": total_files,
             "totalSize": format_size(total_size)
         }
-
-    def _get_treemap(self, local_path, files_to_sync, config, files_config, show_only_included=True):
-        """Generate treemap data"""
-        tree = build_file_tree(local_path, files_to_sync, config, files_config, show_only_included)
-        return tree
 
     def _handle_push(self):
         try:
