@@ -28,6 +28,10 @@ def push_files(
         - Dictionary of files that would be pushed
         - Dictionary mapping project paths to their IDs
         - Project ID
+
+    Raises:
+        ConfigurationError: If active project not found
+        RuntimeError: If file traversal exceeds time limit
     """
     if not project:
         # Use the active project if no project specified
@@ -50,6 +54,16 @@ def push_files(
 
     # Get files to sync using patterns from files configuration
     local_files = get_local_files(config, project_root, files_config)
+
+    # Check if file traversal timed out
+    if local_files is None:
+        error_msg = "File traversal exceeded time limit (5s). Your project may have too many files to process."
+        click.echo(f"Error: {error_msg}")
+        click.echo("Consider narrowing your project scope by:")
+        click.echo("  - Adjusting includes/excludes patterns")
+        click.echo("  - Using push_roots to limit directories")
+        click.echo("  - Adding more patterns to .claudeignore")
+        raise RuntimeError(error_msg)
 
     # Set as active project
     config.set_active_project(project, project_id)

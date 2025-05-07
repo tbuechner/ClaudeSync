@@ -68,7 +68,7 @@ def write_export_file(files, output_path, base_path):
 @handle_errors
 def export(config, project, output):
     """Export all files that would be synchronized into a single file.
-    
+
     If no project is specified, uses the active project.
     """
     if not project:
@@ -86,6 +86,15 @@ def export(config, project, output):
 
     # Get files to include using patterns from files configuration
     local_files = get_local_files(config, project_root, files_config)
+
+    # Check if file traversal timed out
+    if local_files is None:
+        click.echo("Error: File traversal exceeded time limit (5s). Your project may have too many files to process.")
+        click.echo("Consider narrowing your project scope by:")
+        click.echo("  - Adjusting includes/excludes patterns")
+        click.echo("  - Using push_roots to limit directories")
+        click.echo("  - Adding more patterns to .claudeignore")
+        return
 
     if not local_files:
         click.echo("No files found to export.")

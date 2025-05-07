@@ -703,10 +703,26 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                 # Get files that would be synced based on project configuration
                 files_to_sync = get_local_files(self.config, local_path, files_config)
 
-                # Build response data
+                # Handle timeout case
+                if files_to_sync is None:
+                    timeout_response = {
+                        'claudeignore': load_claudeignore_as_string(self.config),
+                        'project': files_config,
+                        'timeout': True,
+                        'timeoutMessage': "File traversal exceeded 5-second time limit. Your project may have too many files to process.",
+                        'stats': {
+                            'filesToSync': 'Unknown',
+                            'totalSize': 'Unknown'
+                        }
+                    }
+                    self.wfile.write(json.dumps(timeout_response).encode())
+                    return
+
+                # Build response data for successful traversal
                 response_data = {
                     'claudeignore': load_claudeignore_as_string(self.config),
                     'project': files_config,
+                    'timeout': False,
                     'stats': self._get_stats(local_path, files_to_sync),
                     'treemap': build_file_tree(local_path, files_to_sync, self.config, files_config, show_only_included)
                 }
@@ -751,6 +767,12 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
 
     def _get_stats(self, local_path, files_to_sync):
         """Calculate sync statistics"""
+        if files_to_sync is None:
+            return {
+                "filesToSync": "Unknown",
+                "totalSize": "Unknown"
+            }
+
         total_size = 0
         total_files = 0
 
