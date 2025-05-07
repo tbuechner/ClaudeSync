@@ -79,11 +79,19 @@ export class AppComponent implements OnInit {
 
   onProjectChange(projectPath: string) {
     this.selectedProject = projectPath;
-
     this.setSelectedProjectUrl();
 
     // Clear the current data before loading new project
     this.fileDataService.clearCache();
+
+    // Clear the treemap by setting syncData to null
+    this.syncData = null;
+
+    // Reset stats
+    this.stats = {
+      filesToSync: 0,
+      totalSize: '0 B'
+    };
 
     // Reset timeout state when changing projects
     this.timeoutOccurred = false;

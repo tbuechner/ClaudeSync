@@ -36,16 +36,28 @@ export class TreemapComponent implements OnDestroy {
         this.updateTreemap();
       } else {
         // Clear treemap data to avoid displaying stale information
-        this.originalTreeData = null;
-        this.files = [];
-        // Clear the treemap visualization
-        const chartContainer = document.getElementById('file-treemap');
-        if (chartContainer) {
-          Plotly.purge(chartContainer);
-        }
+        this.clearTreemap();
         // Display message in the treemap area
+        const chartContainer = document.getElementById('file-treemap');
         this.renderTimeoutMessage(chartContainer);
       }
+    } else {
+      // Handle null data - clear the treemap
+      this.clearTreemap();
+    }
+  }
+
+  private clearTreemap(): void {
+    this.originalTreeData = null;
+    this.files = [];
+    this.selectedNode = null;
+
+    // Clear the treemap visualization
+    const chartContainer = document.getElementById('file-treemap');
+    if (chartContainer) {
+      Plotly.purge(chartContainer);
+      // Add a loading indicator
+      chartContainer.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6b7280;font-size:1.125rem;">Loading project data...</div>';
     }
   }
 
