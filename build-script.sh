@@ -87,7 +87,7 @@ update_setup_py() {
     # Use sed to update the version in setup.py
     if [ "$(uname)" = "Darwin" ]; then
         # macOS requires an empty string for -i
-        sed -i '' "s/version=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"/version=\"${NEW_VERSION}\"/g" setup.py
+        sed -i '' 's/version="[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"/version="0.1.11"/g' setup.py
     else
         # Linux
         sed -i "s/version=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"/version=\"${NEW_VERSION}\"/g" setup.py
@@ -100,16 +100,20 @@ update_setup_py() {
 update_readme() {
     log_info "Updating version in README.md..."
 
-    # Define the pattern to look for (installation link with version)
-    PATTERN="pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-[0-9]\+\.[0-9]\+\.[0-9]\+-py3-none-any\.whl"
-    REPLACEMENT="pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-${NEW_VERSION}-py3-none-any.whl"
-
-    # Use sed to update the version in README.md
+    # For macOS, we'll use a totally different approach
     if [ "$(uname)" = "Darwin" ]; then
-        # macOS requires an empty string for -i
-        sed -i '' "s|${PATTERN}|${REPLACEMENT}|g" README.md
+        # Read the file content
+        README_CONTENT=$(cat README.md)
+
+        # Create the updated content by replacing the old version with the new version
+        UPDATED_CONTENT=$(echo "$README_CONTENT" | sed "s/claudesync_fork-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-py3-none-any/claudesync_fork-${NEW_VERSION}-py3-none-any/g")
+
+        # Write the updated content back to the file
+        echo "$UPDATED_CONTENT" > README.md
     else
-        # Linux
+        # Linux version remains the same
+        PATTERN="pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-[0-9]\+\.[0-9]\+\.[0-9]\+-py3-none-any\.whl"
+        REPLACEMENT="pip install https://github.com/tbuechner/ClaudeSync/raw/refs/heads/master/dist/claudesync_fork-${NEW_VERSION}-py3-none-any.whl"
         sed -i "s|${PATTERN}|${REPLACEMENT}|g" README.md
     fi
 
