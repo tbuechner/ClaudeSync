@@ -1,4 +1,4 @@
-import {Component, OnInit, OnDestroy, Input, EventEmitter, Output} from '@angular/core';
+import {Component, OnInit, OnDestroy, Input, EventEmitter, Output, ChangeDetectorRef} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {FileContentResponse, FileDataService, SyncData} from './file-data.service';
 import { HttpClient } from '@angular/common/http';
@@ -86,7 +86,8 @@ export class TreemapComponent implements OnDestroy {
   constructor(
     private http: HttpClient,
     private fileDataService: FileDataService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private changeDetectorRef: ChangeDetectorRef
   ) {}
 
   ngOnDestroy() {
@@ -528,6 +529,106 @@ Status: %{customdata.included}<br>
       return this.selectedNode.path.replace(/^root\//, '');
     }
     return '';
+  }
+  
+  /**
+   * Determines if the selected node is a folder based on its path
+   */
+  isSelectedNodeFolder(): boolean {
+    if (!this.selectedNode) return false;
+    
+    // Simple check - if the node doesn't have a file extension, it's likely a folder
+    // Could improve this by checking if it has children in the tree structure
+    const nodePath = this.selectedNode.path;
+    const lastSegment = nodePath.split('/').pop() || '';
+    
+    // No file extension and not empty
+    return lastSegment.indexOf('.') === -1 && lastSegment.length > 0;
+  }
+  
+  /**
+   * Load all files in the selected folder, including those not included in the sync
+   */
+  loadAllFolderContents(): void {
+    if (!this.selectedNode || !this.isSelectedNodeFolder()) {
+      this.notificationService.warning('No folder selected');
+      return;
+    }
+    
+    // Get the folder path without the root prefix
+    const folderPath = this.getSelection();
+    
+    this.notificationService.info(`Loading all files in ${folderPath}...`);
+    
+    this.fileDataService.getFolderContents(folderPath)
+      .subscribe({
+        next: (response) => {
+          if (!response.success || !response.contents) {
+            this.notificationService.error('Failed to load folder contents');
+            return;
+          }
+          
+          // Update the folder contents in the treemap
+          this.updateFolderContentsInTreemap(folderPath, response.contents);
+          
+          // Refresh the visualization
+          this.updateTreemap();
+          
+          this.notificationService.success('Folder contents loaded');
+        },
+        error: (error) => {
+          console.error('Error loading folder contents:', error);
+          this.notificationService.error('Failed to load folder contents');
+        }
+      });
+  }
+  
+  /**
+   * Update a specific folder's contents in the treemap data structure
+   */
+  private updateFolderContentsInTreemap(folderPath: string, newContents: any): void {
+    if (!this.originalTreeData) return;
+    
+    // Clone the original data to avoid reference issues
+    const updatedData = JSON.parse(JSON.stringify(this.originalTreeData));
+    
+    // Find the target folder and replace its children
+    const pathParts = folderPath.split('/');
+    
+    // Handle root folder case
+    if (folderPath === '' || folderPath === '.') {
+      updatedData.children = newContents.children;
+      this.originalTreeData = updatedData;
+      return;
+    }
+    
+    // For nested folders, traverse the tree
+    const findAndUpdateNode = (node: any, parts: string[], index: number): boolean => {
+      if (index >= parts.length) return false;
+      
+      if (node.name === parts[index]) {
+        if (index === parts.length - 1) {
+          // Found our target folder
+          node.children = newContents.children;
+          return true;
+        } else if (node.children) {
+          // Continue traversing
+          for (let i = 0; i < node.children.length; i++) {
+            if (findAndUpdateNode(node.children[i], parts, index + 1)) {
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
+    };
+    
+    // Start at root and traverse down
+    findAndUpdateNode(updatedData, pathParts, 0);
+    
+    // Replace the original data with the updated version
+    this.originalTreeData = updatedData;
   }
 
   formatSize(bytes: number): string {

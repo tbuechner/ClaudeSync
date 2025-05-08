@@ -506,6 +506,57 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         logger.debug(f"Handling GET request for path: {parsed_path.path}")
 
+        if parsed_path.path.startswith('/api/folder-contents'):
+            try:
+                # Parse the folder path from query parameters
+                query_params = parse_qs(parsed_path.query)
+                folder_path = query_params.get('path', [''])[0]
+
+                if not folder_path:
+                    self._send_error_response(400, "Missing folder path parameter")
+                    return
+
+                # Get current config and project root
+                project_root = self.config.get_project_root()
+
+                # Validate the requested path is within project root for security
+                full_path = os.path.join(project_root, folder_path)
+                if not is_safe_path(project_root, folder_path):
+                    self._send_error_response(403, "Access denied - path is outside project root")
+                    return
+
+                # Check if folder exists
+                if not os.path.exists(full_path) or not os.path.isdir(full_path):
+                    self._send_error_response(404, "Folder not found")
+                    return
+
+                # Get files that would be synced based on project configuration
+                active_project = self.get_active_project()
+                files_config = self.config.get_files_config(active_project)
+                files_to_sync = get_local_files(self.config, project_root, files_config)
+
+                # Handle timeout case
+                if files_to_sync is None:
+                    self._send_error_response(408, "File traversal timed out")
+                    return
+
+                # Get folder contents with inclusion status
+                folder_contents = self._get_complete_folder_contents(project_root, folder_path, files_to_sync)
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'success': True,
+                    'contents': folder_contents
+                }).encode())
+
+            except Exception as e:
+                logger.error(f"Error processing folder contents request: {str(e)}\n{traceback.format_exc()}")
+                self._send_error_response(500, f"Internal server error: {str(e)}")
+            return
+
         if parsed_path.path.startswith('/api/file-content'):
             try:
                 # Parse the file path from query parameters
@@ -775,6 +826,69 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                 })
 
         return results
+
+    def _get_complete_folder_contents(self, project_root, folder_path, files_to_sync):
+        """
+        Get complete contents of a folder including both included and excluded files.
+        
+        Args:
+            project_root: Base directory of the project
+            folder_path: Path to the folder relative to project root
+            files_to_sync: Dictionary of files that would be synced
+            
+        Returns:
+            dict: Hierarchical structure of the folder with inclusion status for each item
+        """
+        result_tree = {
+            'name': os.path.basename(folder_path) or os.path.basename(project_root),
+            'children': []
+        }
+        
+        # Get the full path to the folder
+        full_folder_path = os.path.join(project_root, folder_path)
+        
+        # List all files and subdirectories in the folder
+        try:
+            items = os.listdir(full_folder_path)
+            
+            # Process subdirectories first
+            for item in sorted(items):
+                item_path = os.path.join(full_folder_path, item)
+                rel_path = os.path.relpath(item_path, project_root)
+                rel_path = rel_path.replace('\\', '/')  # Normalize path separators
+                
+                # Skip hidden files starting with . on Unix systems
+                if item.startswith('.') and item != '.':
+                    continue
+                    
+                if os.path.isdir(item_path):
+                    # Process directory
+                    dir_node = {
+                        'name': item,
+                        'children': []
+                    }
+                    
+                    # Check if any files in this directory are included
+                    has_included_files = any(
+                        f.startswith(rel_path + '/') for f in files_to_sync.keys()
+                    )
+                    
+                    dir_node['included'] = has_included_files
+                    result_tree['children'].append(dir_node)
+                else:
+                    # Process file
+                    file_size = os.path.getsize(item_path)
+                    file_node = {
+                        'name': item,
+                        'size': file_size,
+                        'included': rel_path in files_to_sync
+                    }
+                    result_tree['children'].append(file_node)
+                    
+            return result_tree
+        except Exception as e:
+            logger.error(f"Error getting folder contents: {str(e)}")
+            raise
 
 @click.command()
 @click.option('--port', default=4201, help='Port to run the server on')

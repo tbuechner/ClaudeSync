@@ -146,4 +146,17 @@ export class FileDataService {
       this.http.post(`${this.baseUrl}/resolve-dropped-files`, { files })
     );
   }
+
+  /**
+   * Get all files in a folder, including those not included in the sync
+   * @param folderPath Path to the folder relative to project root
+   * @returns Observable of the folder contents with inclusion status
+   */
+  getFolderContents(folderPath: string): Observable<any> {
+    return this.loadingService.withLoading(
+      this.http.get(`${this.baseUrl}/folder-contents`, {
+        params: { path: folderPath }
+      })
+    );
+  }
 }

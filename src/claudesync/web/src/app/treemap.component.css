@@ -103,6 +103,16 @@
   background-color: #eff6ff;
 }
 
+.show-all-btn {
+  border-color: #c084fc;
+  color: #7c3aed;
+  background-color: #f5f3ff;
+}
+
+.show-all-btn:hover {
+  background-color: #ede9fe;
+}
+
 
 .treemap-container {
   background-color: white;
@@ -117,6 +127,45 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 1.5rem;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.treemap-legend {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.25rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.color-swatch {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 0.25rem;
+}
+
+.color-swatch.included {
+  background-color: #4f46e5; /* Indigo for included */
+}
+
+.color-swatch.partial {
+  background-color: #eab308; /* Yellow for partially included */
+}
+
+.color-swatch.excluded {
+  background-color: #94a3b8; /* Gray for excluded */
 }
 
 .header-actions {
