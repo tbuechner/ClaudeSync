@@ -47,7 +47,6 @@ def tokens(config, project, verbose):
         click.echo(f"\nError: {result.get('message', 'Timeout occurred during token counting')}")
         click.echo("\nConsider narrowing your project scope by:")
         click.echo("  - Adjusting includes/excludes patterns")
-        click.echo("  - Using push_roots to limit directories")
         click.echo("  - Adding more patterns to .claudeignore")
         return
 

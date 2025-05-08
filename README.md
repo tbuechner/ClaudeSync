@@ -142,10 +142,7 @@ If you have a large codebase and want to synchronize only specific files with Cl
       "cf.cplace.draggablePageList/assets/less"
    ],
    "excludes": [],
-   "use_ignore_files": false,
-   "push_roots": [
-      "cf.cplace.draggablePageList"
-   ]
+   "use_ignore_files": false
 }
 ```
 
@@ -161,14 +158,9 @@ The `xxx.project.json` file contains several properties that control how files a
 
 - `project_name`: The display name of the project shown in Claude.ai.
 - `project_description`: A brief description of what the project is about.
-- `includes`: An array of file path patterns to include in the synchronization. These can use glob patterns like `*.js` or specify directories like `src/components`. Paths are relative to the project root, not to the push roots.
-- `excludes`: An array of file path patterns to exclude from synchronization. These patterns override matching patterns in the `includes` array. Paths are relative to the project root, not to the push roots.
+- `includes`: An array of file path patterns to include in the synchronization. These can use glob patterns like `*.js` or specify directories like `src/components`. Paths are relative to the project root.
+- `excludes`: An array of file path patterns to exclude from synchronization. These patterns override matching patterns in the `includes` array. Paths are relative to the project root.
 - `use_ignore_files`: Boolean value (true/false) that determines whether to use `.gitignore` and `.claudeignore` files for additional exclusion rules.
-- `push_roots`: An array of subdirectory paths where file synchronization should begin. This feature helps focus synchronization on specific parts of a large repository.
-  - Only specify directories, not individual files
-  - All paths are relative to the project root
-  - **Important:** This array must be empty if you need to synchronize files in the project root level, as files outside of specified push_roots directories are never synchronized
-  - Only files that are both within push_roots AND match an include pattern will be synchronized
 
 Example configuration:
 ```json
@@ -184,12 +176,7 @@ Example configuration:
       "src/**/*.test.ts",
       "src/deprecated/**"
    ],
-   "use_ignore_files": true,
-   "push_roots": [
-      "src",
-      "config",
-      "docs"
-   ]
+   "use_ignore_files": true
 }
 ```
 
@@ -201,8 +188,6 @@ This configuration will:
 5. Exclude all files in the `src/deprecated` directory
 6. Respect patterns in `.gitignore` and `.claudeignore` files
 7. Only search for files within the `src`, `config`, and `docs` directories
-
-**Important Note**: When using `push_roots`, only files in the specified root directories will be considered for synchronization, even if they match patterns in the `includes` array. Each file must both match an include pattern AND be in one of the push_roots directories to be synchronized.
 
 ## Working with ClaudeSync and Claude.ai
 

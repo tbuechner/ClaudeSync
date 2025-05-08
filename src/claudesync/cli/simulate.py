@@ -32,7 +32,7 @@ class TreeNode(TypedDict):
     children: Optional[List['TreeNode']]
     included: Optional[bool]
 
-def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files_config, show_only_included: bool = True) -> dict:
+def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files_config) -> dict:
     """
     Build a hierarchical tree structure from the list of files with support for multiple roots.
     This optimized version avoids walking the entire directory tree when show_only_included=True
@@ -48,153 +48,60 @@ def build_file_tree(base_path: str, files_to_sync: Dict[str, str], config, files
     # Create a set of files that will be synced for quick lookup
     sync_files = set(files_to_sync.keys())
 
-    if show_only_included:
-        # Optimized path: build tree directly from included files without directory walking
-        logger.debug(f"Using optimized tree building for {len(sync_files)} included files")
+    # Optimized path: build tree directly from included files without directory walking
+    logger.debug(f"Using optimized tree building for {len(sync_files)} included files")
 
-        # Dictionary to track created directory nodes to avoid redundant creation
-        dir_nodes = {}
+    # Dictionary to track created directory nodes to avoid redundant creation
+    dir_nodes = {}
 
-        # Process each included file
-        for rel_path in sorted(sync_files):  # Sort for consistent results
-            full_path = os.path.join(base_path, rel_path)
+    # Process each included file
+    for rel_path in sorted(sync_files):  # Sort for consistent results
+        full_path = os.path.join(base_path, rel_path)
 
-            # Skip if file doesn't exist anymore
-            if not os.path.exists(full_path):
-                continue
-
-            # Get file size
-            try:
-                file_size = os.path.getsize(full_path)
-            except OSError:
-                continue
-
-            # Build directory path in tree efficiently
-            path_parts = Path(rel_path).parts
-            file_name = path_parts[-1]
-            dir_path = path_parts[:-1]
-
-            # Ensure parent directories exist
-            current = root
-            current_path = []
-
-            for part in dir_path:
-                current_path.append(part)
-                path_key = '/'.join(current_path)
-
-                # Only create directory node if it doesn't exist yet
-                if path_key not in dir_nodes:
-                    dir_node = {
-                        'name': part,
-                        'children': []
-                    }
-                    current['children'].append(dir_node)
-                    dir_nodes[path_key] = dir_node
-
-                current = dir_nodes[path_key]
-
-            # Add the file node
-            current['children'].append({
-                'name': file_name,
-                'size': file_size,
-                'included': True  # All files in sync_files are included
-            })
-
-        logger.debug(f"Tree built with {len(dir_nodes)} directories")
-    else:
-        # Original behavior - walk the entire directory tree
-        use_ignore_files = files_config.get("use_ignore_files", True)
-        gitignore = load_gitignore(base_path) if use_ignore_files else None
-        claudeignore = load_claudeignore(base_path) if use_ignore_files else None
-
-        # Get push_roots from project config
-        project_config = config.get_files_config(config.get_active_project()[0])
-        push_roots = project_config.get('push_roots', [])
-
-        if not push_roots:
-            # Use base_path as single root
-            process_root(base_path, '', root, sync_files, gitignore, claudeignore, show_only_included)
-        else:
-            # Process each specified root directory
-            for root_dir in push_roots:
-                full_root_path = os.path.join(base_path, root_dir)
-                if not os.path.exists(full_root_path):
-                    logger.warning(f"Specified root path does not exist: {full_root_path}")
-                    continue
-
-                # Process files under this root
-                process_root(full_root_path, root_dir, root, sync_files, gitignore, claudeignore, show_only_included)
-
-    return root
-
-def process_root(root_dir: str, rel_root_base: str, node: dict, sync_files: set,
-                 gitignore: Optional[pathspec.PathSpec], claudeignore: Optional[pathspec.PathSpec],
-                 show_only_included: bool = True):
-    """
-    Process a single root directory and build its tree structure.
-
-    Args:
-        root_dir: The full path to the root directory
-        rel_root_base: The relative path base for this root
-        node: The node to populate with the tree structure
-        sync_files: Set of files that will be synced
-        gitignore: PathSpec object for gitignore patterns
-        claudeignore: PathSpec object for claudeignore patterns
-        show_only_included: If True, only process files that will be synced
-    """
-    for current_dir, _, files in os.walk(root_dir):
-        # Get path relative to the project root
-        rel_root = os.path.relpath(current_dir, root_dir)
-        rel_root = '' if rel_root == '.' else rel_root
-
-        # Skip ignored directories
-        full_rel_path = os.path.join(rel_root_base, rel_root) if rel_root_base else rel_root
-        if (gitignore and gitignore.match_file(full_rel_path)) or \
-                (claudeignore and claudeignore.match_file(full_rel_path)):
+        # Skip if file doesn't exist anymore
+        if not os.path.exists(full_path):
             continue
 
-        # Process the files in the current directory
-        for filename in files:
-            rel_path = os.path.join(full_rel_path, filename)
-            full_path = os.path.join(current_dir, filename)
+        # Get file size
+        try:
+            file_size = os.path.getsize(full_path)
+        except OSError:
+            continue
 
-            # Skip if file doesn't exist anymore or is ignored
-            if not os.path.exists(full_path) or \
-                    (claudeignore and claudeignore.match_file(rel_path)):
-                continue
+        # Build directory path in tree efficiently
+        path_parts = Path(rel_path).parts
+        file_name = path_parts[-1]
+        dir_path = path_parts[:-1]
 
-            # If we're only showing included files, skip files not in sync_files
-            if show_only_included and rel_path not in sync_files:
-                continue
+        # Ensure parent directories exist
+        current = root
+        current_path = []
 
-            # Get file size
-            try:
-                file_size = os.path.getsize(full_path)
-            except OSError:
-                continue
+        for part in dir_path:
+            current_path.append(part)
+            path_key = '/'.join(current_path)
 
-            # Build path in tree
-            current = node
-            path_parts = Path(rel_path).parts
+            # Only create directory node if it doesn't exist yet
+            if path_key not in dir_nodes:
+                dir_node = {
+                    'name': part,
+                    'children': []
+                }
+                current['children'].append(dir_node)
+                dir_nodes[path_key] = dir_node
 
-            # Navigate/build the tree structure
-            for i, part in enumerate(path_parts[:-1]):
-                # Find or create directory node
-                child = next((c for c in current['children'] if c['name'] == part), None)
-                if child is None:
-                    child = {
-                        'name': part,
-                        'children': []
-                    }
-                    current['children'].append(child)
-                current = child
+            current = dir_nodes[path_key]
 
-            # Add the file node
-            current['children'].append({
-                'name': path_parts[-1],
-                'size': file_size,
-                'included': rel_path in sync_files
-            })
+        # Add the file node
+        current['children'].append({
+            'name': file_name,
+            'size': file_size,
+            'included': True  # All files in sync_files are included
+        })
+
+    logger.debug(f"Tree built with {len(dir_nodes)} directories")
+
+    return root
 
 def get_project_root():
     """Get the project root directory."""
@@ -242,28 +149,6 @@ def is_safe_path(base_dir: str, requested_path: str) -> bool:
     except (ValueError, OSError):
         # Handle any path manipulation errors
         return False
-
-def load_config():
-    """Load configuration from .claudesync/config.local.json."""
-    project_root = get_project_root()
-    config_path = project_root / '.claudesync' / 'config.local.json'
-    logger.debug(f"Attempting to load config from: {config_path}")
-
-    try:
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-            categories = config.get('file_categories', {})
-            logger.debug(f"Successfully loaded config with {len(categories)} categories: {list(categories.keys())}")
-            return categories
-    except FileNotFoundError:
-        logger.warning(f"Config file not found at {config_path}")
-        return {}
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in config file at {config_path}: {e}")
-        return {}
-    except Exception as e:
-        logger.error(f"Error reading config file at {config_path}: {e}")
-        return {}
 
 def format_size(size):
     """Convert size in bytes to human readable format."""
@@ -676,14 +561,6 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
             try:
-                # Parse query parameters
-                query_params = parse_qs(parsed_path.query)
-                show_only_included_param = query_params.get('showOnlyIncluded', ['true'])[0].lower()
-                # Convert string parameter to boolean
-                show_only_included = show_only_included_param == 'true'
-
-                logger.debug(f"Using show_only_included={show_only_included} for sync-data request")
-
                 local_path = self.config.get_project_root()
                 active_project = self.get_active_project()
                 files_config = self.config.get_files_config(active_project)
@@ -712,7 +589,7 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                     'project': files_config,
                     'timeout': False,
                     'stats': self._get_stats(local_path, files_to_sync),
-                    'treemap': build_file_tree(local_path, files_to_sync, self.config, files_config, show_only_included)
+                    'treemap': build_file_tree(local_path, files_to_sync, self.config, files_config)
                 }
 
                 self.wfile.write(json.dumps(response_data).encode())

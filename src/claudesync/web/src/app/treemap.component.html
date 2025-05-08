@@ -4,14 +4,6 @@
     <div class="header-container">
       <h2>File Distribution</h2>
       <div class="header-actions">
-        <label class="filter-toggle">
-          <input
-            type="checkbox"
-            [(ngModel)]="showOnlyIncluded"
-            (ngModelChange)="onShowOnlyIncludedChange()"
-            class="filter-checkbox">
-          Show only included files
-        </label>
         <button
           class="toggle-btn"
           (click)="showFileList = !showFileList">

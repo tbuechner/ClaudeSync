@@ -10,6 +10,5 @@
     "deprecated",
     "src/claudesync/web/package-lock.json"
   ],
-  "use_ignore_files": true,
-  "push_roots": []
+  "use_ignore_files": true
 }

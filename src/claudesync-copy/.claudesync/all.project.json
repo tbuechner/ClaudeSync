@@ -8,8 +8,5 @@
   ],
   "excludes": [
     "*.package-lock.json"
-  ],
-  "simulate_push_roots": [
-    "claudesync/cli"
   ]
 }

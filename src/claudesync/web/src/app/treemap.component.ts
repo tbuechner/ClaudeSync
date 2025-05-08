@@ -61,10 +61,7 @@ export class TreemapComponent implements OnDestroy {
     }
   }
 
-  @Output() reloadRequired = new EventEmitter<{showOnlyIncluded: boolean}>();
-
   selectedNode: SelectedNode | null = null;
-  showOnlyIncluded = true;
   showFileList = false;
   private destroy$ = new Subject<void>();
   private baseUrl = 'http://localhost:4201/api';
@@ -102,33 +99,6 @@ export class TreemapComponent implements OnDestroy {
     if (chartContainer) {
       Plotly.purge(chartContainer);
     }
-  }
-
-  private filterTree(node: any): any {
-    if (!this.showOnlyIncluded) {
-      return node;
-    }
-
-    if (!node.children) {
-      // Leaf node (file)
-      return node.included ? node : null;
-    }
-
-    // Filter children recursively
-    const filteredChildren = (node.children || [])
-      // @ts-ignore
-      .map(child => this.filterTree(child))
-      // @ts-ignore
-      .filter(child => child !== null);
-
-    if (filteredChildren.length === 0) {
-      return null;
-    }
-
-    return {
-      ...node,
-      children: filteredChildren
-    };
   }
 
   public updateTreemap() {
@@ -189,7 +159,6 @@ export class TreemapComponent implements OnDestroy {
       <ul style="text-align: left; margin-top: 0.5rem;">
         <li>Use more specific include patterns in your project configuration</li>
         <li>Add more exclude patterns or update your .claudeignore file</li>
-        <li>If possible, specify push_roots for targeted synchronization</li>
       </ul>
     `;
 
@@ -317,10 +286,6 @@ export class TreemapComponent implements OnDestroy {
 
   get filteredFiles(): FileInfo[] {
     let filtered = this.files;
-
-    if (this.showOnlyIncluded) {
-      filtered = filtered.filter(f => f.included);
-    }
 
     if (this.filterText.trim()) {
       const searchText = this.filterText.toLowerCase();
@@ -608,17 +573,6 @@ Status: %{customdata.included}<br>
     this.fileContentError = null;
   }
 
-  onShowOnlyIncludedChange() {
-    // Don't trigger changes in timeout state
-    if (this.timeoutOccurred) {
-      this.notificationService.warning('Cannot change view in timeout state');
-      return;
-    }
-
-    // Emit the event with the current filter state
-    this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
-  }
-
   handleNodeAction(action: string) {
     if (!this.selectedNode) return;
 
@@ -674,8 +628,6 @@ Status: %{customdata.included}<br>
     this.fileDataService.updateConfigIncrementally(config)
       .subscribe({
         next: (response) => {
-          // Pass the current filter state when triggering reload
-          this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
         },
         error: (error) => {
           console.error('Error updating configuration:', error);
@@ -751,10 +703,5 @@ Status: %{customdata.included}<br>
         });
       }, index * 200); // Stagger updates to avoid race conditions
     });
-
-    // After all paths are added, trigger a reload with current filter
-    setTimeout(() => {
-      this.reloadRequired.emit({showOnlyIncluded: this.showOnlyIncluded});
-    }, pathsToAdd.length * 200 + 300);
   }
 }

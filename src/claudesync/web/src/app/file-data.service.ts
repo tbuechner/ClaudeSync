@@ -48,12 +48,9 @@ export class FileDataService {
 
   constructor(private http: HttpClient, private loadingService: LoadingService) {}
 
-  private getSyncDataFromApi(showOnlyIncluded: boolean = true): Observable<SyncData> {
-    // Create params object with the showOnlyIncluded parameter
-    const params = new HttpParams().set('showOnlyIncluded', showOnlyIncluded.toString());
-
+  private getSyncDataFromApi(): Observable<SyncData> {
     return this.loadingService.withLoading(
-      this.http.get<SyncData>(`${this.baseUrl}/sync-data`, { params }).pipe(
+      this.http.get<SyncData>(`${this.baseUrl}/sync-data`, {}).pipe(
         tap(data => {
           this.cachedData = data;
           console.debug('Cached sync data updated');
@@ -61,23 +58,11 @@ export class FileDataService {
       ));
   }
 
-  getSyncData(showOnlyIncluded: boolean = true): Observable<SyncData> {
+  getSyncData(): Observable<SyncData> {
     if (this.cachedData) {
       return of(this.cachedData);
     }
-    return this.getSyncDataFromApi(showOnlyIncluded);
-  }
-
-  getProjectConfig(): Observable<ProjectConfig> {
-    return this.getSyncData().pipe(
-      map(data => data.project)
-    );
-  }
-
-  getClaudeIgnore(): Observable<string> {
-    return this.getSyncData().pipe(
-      map(data => data.claudeignore)
-    );
+    return this.getSyncDataFromApi();
   }
 
   getStats(): Observable<SyncStats> {
@@ -86,15 +71,9 @@ export class FileDataService {
     );
   }
 
-  getTreemapData(showOnlyIncluded: boolean = true): Observable<any> {
-    return this.getSyncData(showOnlyIncluded).pipe(
-      map(data => data.treemap)
-    );
-  }
-
-  refreshCache(showOnlyIncluded: boolean = true): Observable<SyncData> {
+  refreshCache(): Observable<SyncData> {
     this.clearCache();
-    return this.getSyncData(showOnlyIncluded);
+    return this.getSyncData();
   }
 
   clearCache(): void {
