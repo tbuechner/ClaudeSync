@@ -142,9 +142,6 @@ def process_root(root_dir: str, rel_root_base: str, node: dict, sync_files: set,
         claudeignore: PathSpec object for claudeignore patterns
         show_only_included: If True, only process files that will be synced
     """
-    # Dictionary to track created directory nodes to avoid redundant creation
-    dir_nodes = {}
-
     for current_dir, _, files in os.walk(root_dir):
         # Get path relative to the project root
         rel_root = os.path.relpath(current_dir, root_dir)
@@ -176,34 +173,25 @@ def process_root(root_dir: str, rel_root_base: str, node: dict, sync_files: set,
             except OSError:
                 continue
 
-            # Build directory path in tree efficiently
-            # Use a path-based approach to create parent directories as needed
-            path_parts = Path(rel_path).parts
-            file_name = path_parts[-1]
-            dir_path = path_parts[:-1]
-
-            # Ensure parent directories exist
+            # Build path in tree
             current = node
-            current_path = []
+            path_parts = Path(rel_path).parts
 
-            for part in dir_path:
-                current_path.append(part)
-                path_key = '/'.join(current_path)
-
-                # Only create directory node if it doesn't exist yet
-                if path_key not in dir_nodes:
-                    dir_node = {
+            # Navigate/build the tree structure
+            for i, part in enumerate(path_parts[:-1]):
+                # Find or create directory node
+                child = next((c for c in current['children'] if c['name'] == part), None)
+                if child is None:
+                    child = {
                         'name': part,
                         'children': []
                     }
-                    current['children'].append(dir_node)
-                    dir_nodes[path_key] = dir_node
-
-                current = dir_nodes[path_key]
+                    current['children'].append(child)
+                current = child
 
             # Add the file node
             current['children'].append({
-                'name': file_name,
+                'name': path_parts[-1],
                 'size': file_size,
                 'included': rel_path in sync_files
             })
