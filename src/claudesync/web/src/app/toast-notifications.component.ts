@@ -66,34 +66,18 @@ export class ToastNotificationsComponent implements OnDestroy {
   }
 
   // Helper method to get appropriate CSS class based on notification type
-  getTypeClass(type: string): string {
+  getStyleClassForType(type: string): string {
     switch (type) {
       case 'success':
-        return 'bg-green-500';
+        return 'notification-success';
       case 'error':
-        return 'bg-red-500';
+        return 'notification-error';
       case 'info':
-        return 'bg-blue-500';
+        return 'notification-info';
       case 'warning':
-        return 'bg-yellow-500';
+        return 'notification-warning';
       default:
-        return 'bg-gray-500';
-    }
-  }
-
-  // Method to get icon class based on notification type
-  getIconClass(type: string): string {
-    switch (type) {
-      case 'success':
-        return 'text-green-500';
-      case 'error':
-        return 'text-red-500';
-      case 'info':
-        return 'text-blue-500';
-      case 'warning':
-        return 'text-yellow-500';
-      default:
-        return 'text-gray-500';
+        return 'notification-info';
     }
   }
 

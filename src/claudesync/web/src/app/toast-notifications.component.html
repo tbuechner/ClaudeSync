@@ -1,32 +1,47 @@
 <div class="fixed-notifications-container">
   <!-- Loop through notifications -->
   <div *ngFor="let notification of notifications; trackBy: trackById"
-       class="notification-card bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden"
+       class="notification-card" 
+       [ngClass]="getStyleClassForType(notification.type)" 
        [@notificationAnimation]="notification.state">
 
-    <div class="p-4">
-      <div class="flex items-start">
-        <!-- Status Indicator -->
-        <div class="flex-shrink-0">
-          <div [class]="'h-3 w-3 rounded-full ' + getTypeClass(notification.type)"></div>
-        </div>
-
-        <!-- Message -->
-        <div class="ml-3 w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900">
-            {{notification.message}}
-          </p>
-        </div>
-
-        <!-- Simple Close Button with × symbol -->
-        <div class="ml-4 flex-shrink-0">
-          <button class="bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-1 px-2 rounded text-sm"
-                  (click)="dismiss(notification.id)"
-                  aria-label="Close notification">
-            ×
-          </button>
-        </div>
+    <div class="notification-content">
+      <!-- Icon based on notification type -->
+      <div class="notification-icon">
+        <svg *ngIf="notification.type === 'success'" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 6L9 17l-5-5"></path>
+        </svg>
+        <svg *ngIf="notification.type === 'error'" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+        <svg *ngIf="notification.type === 'info'" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <svg *ngIf="notification.type === 'warning'" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
       </div>
+
+      <!-- Message -->
+      <div class="notification-message">
+        <p>{{notification.message}}</p>
+      </div>
+
+      <!-- Close Button -->
+      <button class="notification-close-btn"
+              (click)="dismiss(notification.id)"
+              aria-label="Close notification">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
   </div>
 </div>
