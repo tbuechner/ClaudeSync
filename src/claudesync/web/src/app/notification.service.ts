@@ -6,6 +6,7 @@ export interface Notification {
   message: string;
   type: 'success' | 'error' | 'info' | 'warning';
   duration?: number;
+  state?: 'visible' | 'hidden';
 }
 
 @Injectable({
@@ -27,7 +28,8 @@ export class NotificationService {
       id: this.generateId(),
       message,
       type,
-      duration
+      duration,
+      state: 'visible' // Initial state for animation
     };
 
     // Add to current notifications

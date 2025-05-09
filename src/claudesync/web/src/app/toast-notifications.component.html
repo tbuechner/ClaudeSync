@@ -1,8 +1,8 @@
-<div class="fixed top-4 right-4 z-50 flex flex-col gap-2">
+<div class="fixed-notifications-container">
   <!-- Loop through notifications -->
   <div *ngFor="let notification of notifications; trackBy: trackById"
-       class="max-w-sm w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden"
-       [class.animate-fade-in]="true">
+       class="notification-card bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden"
+       [@notificationAnimation]="notification.state">
 
     <div class="p-4">
       <div class="flex items-start">

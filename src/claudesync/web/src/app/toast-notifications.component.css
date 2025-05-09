@@ -1,40 +1,20 @@
-/* Animation for notification entry */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+/* Fixed container for notifications that doesn't affect page layout */
+.fixed-notifications-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  max-width: 24rem;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none; /* Let clicks pass through container */
 }
 
-/* Animation for notification exit */
-@keyframes fadeOut {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-.animate-fade-out {
-  animation: fadeOut 0.3s ease-in;
-}
-
-/* Optional: If you need to ensure notifications are clickable and don't interfere with content behind */
-.notification-container {
-  pointer-events: none;
-}
-
-.notification-container > * {
-  pointer-events: auto;
+.notification-card {
+  width: 100%;
+  max-width: 20rem;
+  margin-bottom: 0.5rem;
+  pointer-events: auto; /* Make notifications clickable */
+  transform-origin: top right;
 }
