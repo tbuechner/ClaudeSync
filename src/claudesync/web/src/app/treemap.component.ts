@@ -23,8 +23,14 @@ declare const Plotly: any;
   styleUrls: ['./treemap.component.css']
 })
 export class TreemapComponent implements OnDestroy {
-  hiddenFolders: Set<string> = new Set<string>();
-  hasHiddenFolders: boolean = false;
+  /**
+   * Track if the view has been modified (folders hidden)
+   */
+  private _viewIsModified = false;
+  
+  get viewIsModified(): boolean {
+    return this._viewIsModified;
+  }
 
   @Input() set syncData(data: SyncData | null) {
     if (data) {
@@ -196,12 +202,6 @@ export class TreemapComponent implements OnDestroy {
 
     const processNode = (node: any, parentId: string) => {
       const currentId = parentId ? `${parentId}/${node.name}` : node.name;
-
-      // Skip this node and its children if it's in the hiddenFolders set
-      // (but only if it's not the root node)
-      if (currentId !== 'root' && this.hiddenFolders.has(this.getPathWithoutRoot(currentId))) {
-        return;
-      }
 
       data.labels.push(node.name);
       data.parents.push(parentId);
@@ -595,9 +595,13 @@ Status: %{customdata.included}<br>
     }
 
     const folderPath = this.getSelection();
-    this.hiddenFolders.add(folderPath);
-    this.hasHiddenFolders = true;
-
+    
+    // Remove the folder from the tree directly
+    this.removeNodeFromTree(this.originalTreeData, folderPath);
+    
+    // Mark view as modified
+    this._viewIsModified = true;
+    
     // Update the visualization
     this.updateTreemap();
 
@@ -606,17 +610,57 @@ Status: %{customdata.included}<br>
 
     this.notificationService.info(`Folder "${folderPath}" hidden from view`);
   }
+  
+  /**
+   * Recursively searches for and removes a node from the tree
+   * @param treeNode The current tree node to search in
+   * @param targetPath The path of the node to remove
+   * @param currentPath The path of the current node being processed
+   * @returns True if the node was found and removed, false otherwise
+   */
+  private removeNodeFromTree(treeNode: any, targetPath: string, currentPath: string = ''): boolean {
+    if (!treeNode || !treeNode.children) {
+      return false;
+    }
+    
+    for (let i = 0; i < treeNode.children.length; i++) {
+      const child = treeNode.children[i];
+      const childPath = currentPath ? `${currentPath}/${child.name}` : child.name;
+      
+      // If this is the node we're looking for, remove it
+      if (childPath === targetPath) {
+        treeNode.children.splice(i, 1); // Remove the child at index i
+        return true;
+      }
+      
+      // Otherwise, check children recursively
+      if (child.children && this.removeNodeFromTree(child, targetPath, childPath)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
 
   resetView(): void {
-    if (this.hiddenFolders.size === 0) {
-      return;
-    }
-
-    this.hiddenFolders.clear();
-    this.hasHiddenFolders = false;
-    this.updateTreemap();
-
-    this.notificationService.info('View reset, all folders are now visible');
+    // Reload data from the server instead of keeping a local copy
+    this.notificationService.info('Reloading data from server...');
+    this._viewIsModified = false;
+    
+    // Clear current selection to avoid references to nodes that might not exist after reload
+    this.clearSelection();
+    
+    // Refresh data from the server
+    this.fileDataService.refreshCache().subscribe({
+      next: (data) => {
+        // Data will be automatically processed via the syncData setter
+        this.notificationService.success('View reset, all folders are now visible');
+      },
+      error: (error) => {
+        console.error('Error refreshing data:', error);
+        this.notificationService.error('Failed to reset view: ' + (error.message || 'Unknown error'));
+      }
+    });
   }
 
   loadAllFolderContents(): void {
