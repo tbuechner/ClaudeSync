@@ -511,49 +511,74 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                 # Parse the folder path from query parameters
                 query_params = parse_qs(parsed_path.query)
                 folder_path = query_params.get('path', [''])[0]
+                logger.debug(f"Received folder contents request for path: '{folder_path}'")
 
                 if not folder_path:
+                    logger.warning("Missing folder path parameter")
                     self._send_error_response(400, "Missing folder path parameter")
                     return
 
                 # Get current config and project root
                 project_root = self.config.get_project_root()
+                logger.debug(f"Project root: {project_root}")
 
                 # Validate the requested path is within project root for security
                 full_path = os.path.join(project_root, folder_path)
+                logger.debug(f"Full path to folder: {full_path}")
+                
                 if not is_safe_path(project_root, folder_path):
+                    logger.warning(f"Rejected unsafe path: {folder_path}")
                     self._send_error_response(403, "Access denied - path is outside project root")
                     return
 
                 # Check if folder exists
-                if not os.path.exists(full_path) or not os.path.isdir(full_path):
+                if not os.path.exists(full_path):
+                    logger.warning(f"Folder does not exist: {full_path}")
                     self._send_error_response(404, "Folder not found")
+                    return
+                
+                if not os.path.isdir(full_path):
+                    logger.warning(f"Path exists but is not a directory: {full_path}")
+                    self._send_error_response(400, "Path is not a directory")
                     return
 
                 # Get files that would be synced based on project configuration
+                logger.debug("Getting active project and files config")
                 active_project = self.get_active_project()
                 files_config = self.config.get_files_config(active_project)
+                logger.debug(f"Getting files to sync for project: {active_project}")
                 files_to_sync = get_local_files(self.config, project_root, files_config)
 
                 # Handle timeout case
                 if files_to_sync is None:
+                    logger.warning("File traversal timed out")
                     self._send_error_response(408, "File traversal timed out")
                     return
 
+                logger.debug(f"Found {len(files_to_sync)} files to sync")
+                
                 # Get folder contents with inclusion status
+                logger.debug(f"Getting complete folder contents for {folder_path}")
                 folder_contents = self._get_complete_folder_contents(project_root, folder_path, files_to_sync)
+                logger.debug(f"Got folder contents with {len(folder_contents.get('children', []))} items")
 
+                # Prepare response
+                response_data = {
+                    'success': True,
+                    'contents': folder_contents
+                }
+                logger.debug("Sending folder contents response")
+                
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.send_cors_headers()
                 self.end_headers()
-                self.wfile.write(json.dumps({
-                    'success': True,
-                    'contents': folder_contents
-                }).encode())
+                self.wfile.write(json.dumps(response_data).encode())
+                logger.debug("Folder contents response sent successfully")
 
             except Exception as e:
-                logger.error(f"Error processing folder contents request: {str(e)}\n{traceback.format_exc()}")
+                logger.error(f"Error processing folder contents request: {str(e)}")
+                logger.debug(traceback.format_exc())
                 self._send_error_response(500, f"Internal server error: {str(e)}")
             return
 
@@ -839,17 +864,25 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
         Returns:
             dict: Hierarchical structure of the folder with inclusion status for each item
         """
+        logger.debug(f"Getting complete folder contents for: {folder_path}")
+        
+        # Determine appropriate folder name
+        folder_name = os.path.basename(folder_path) or os.path.basename(project_root)
+        logger.debug(f"Using folder name: {folder_name}")
+        
         result_tree = {
-            'name': os.path.basename(folder_path) or os.path.basename(project_root),
+            'name': folder_name,
             'children': []
         }
         
         # Get the full path to the folder
         full_folder_path = os.path.join(project_root, folder_path)
+        logger.debug(f"Full folder path: {full_folder_path}")
         
         # List all files and subdirectories in the folder
         try:
             items = os.listdir(full_folder_path)
+            logger.debug(f"Found {len(items)} items in folder")
             
             # Process subdirectories first
             for item in sorted(items):
@@ -859,35 +892,45 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # Skip hidden files starting with . on Unix systems
                 if item.startswith('.') and item != '.':
+                    logger.debug(f"Skipping hidden item: {item}")
                     continue
                     
                 if os.path.isdir(item_path):
                     # Process directory
+                    logger.debug(f"Processing directory: {item}")
                     dir_node = {
                         'name': item,
                         'children': []
                     }
                     
                     # Check if any files in this directory are included
+                    included_prefix = rel_path + '/'
                     has_included_files = any(
-                        f.startswith(rel_path + '/') for f in files_to_sync.keys()
+                        f.startswith(included_prefix) for f in files_to_sync.keys()
                     )
+                    logger.debug(f"Directory {item} included status: {has_included_files}")
                     
                     dir_node['included'] = has_included_files
                     result_tree['children'].append(dir_node)
                 else:
                     # Process file
+                    logger.debug(f"Processing file: {item}")
                     file_size = os.path.getsize(item_path)
+                    included = rel_path in files_to_sync
+                    logger.debug(f"File {item} size: {file_size}, included: {included}")
+                    
                     file_node = {
                         'name': item,
                         'size': file_size,
-                        'included': rel_path in files_to_sync
+                        'included': included
                     }
                     result_tree['children'].append(file_node)
-                    
+            
+            logger.debug(f"Returning folder tree with {len(result_tree['children'])} children")
             return result_tree
         except Exception as e:
             logger.error(f"Error getting folder contents: {str(e)}")
+            logger.debug(traceback.format_exc())
             raise
 
 @click.command()
