@@ -24,10 +24,15 @@ declare const Plotly: any;
 })
 export class TreemapComponent implements OnDestroy {
   /**
-   * Track if the view has been modified (folders hidden)
+   * Track if the view has been modified (folders hidden or reloaded via Show All Files)
+   * This is used by the parent component to change the Reload button appearance
    */
   private _viewIsModified = false;
   
+  /**
+   * Public getter for the view modified state
+   * @returns True if the view has been modified (folders hidden or reloaded)
+   */
   get viewIsModified(): boolean {
     return this._viewIsModified;
   }
@@ -645,6 +650,8 @@ Status: %{customdata.included}<br>
   resetView(): void {
     // Reload data from the server instead of keeping a local copy
     this.notificationService.info('Reloading data from server...');
+    
+    // Reset the view modified flag
     this._viewIsModified = false;
     
     // Clear current selection to avoid references to nodes that might not exist after reload
@@ -659,6 +666,10 @@ Status: %{customdata.included}<br>
       error: (error) => {
         console.error('Error refreshing data:', error);
         this.notificationService.error('Failed to reset view: ' + (error.message || 'Unknown error'));
+        
+        // Even if there's an error, the view is no longer in a modified state
+        // because we're starting from scratch
+        this._viewIsModified = false;
       }
     });
   }
@@ -705,6 +716,9 @@ Status: %{customdata.included}<br>
 
           // Update the folder contents in the treemap
           this.updateFolderContentsInTreemap(folderPath, response.contents);
+          
+          // Mark view as modified when a folder is reloaded
+          this._viewIsModified = true;
 
           // Refresh the visualization
           console.log('Updating treemap visualization');
