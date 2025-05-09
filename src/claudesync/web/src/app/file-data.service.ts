@@ -18,13 +18,6 @@ export interface ProjectConfig {
   excludes: string[];
 }
 
-export interface TreemapData {
-  labels: string[];
-  parents: string[];
-  values: number[];
-  ids: string[];
-}
-
 export interface FileContentResponse {
   content: string;
   error?: string;

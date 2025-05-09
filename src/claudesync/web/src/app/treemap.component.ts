@@ -546,18 +546,44 @@ Status: %{customdata.included}<br>
   }
 
   /**
-   * Determines if the selected node is a folder based on its path
+   * Determines if the selected node is a folder based on the tree structure
    */
   isSelectedNodeFolder(): boolean {
     if (!this.selectedNode) return false;
-
-    // Simple check - if the node doesn't have a file extension, it's likely a folder
-    // Could improve this by checking if it has children in the tree structure
-    const nodePath = this.selectedNode.path;
-    const lastSegment = nodePath.split('/').pop() || '';
-
-    // No file extension and not empty
-    return lastSegment.indexOf('.') === -1 && lastSegment.length > 0;
+    
+    // Get node ID from selected path
+    const nodeId = this.selectedNode.path;
+    
+    // Look for this node in original tree data
+    const findNode = (node: any, targetId: string): any => {
+      // Direct match for this node
+      if (node.name === targetId || targetId.endsWith('/' + node.name)) {
+        return node;
+      }
+      
+      // If this is a directory, search its children
+      if (node.children) {
+        // Check if the full path matches this node
+        const pathWithoutRoot = targetId.replace(/^root\//, '');
+        if (pathWithoutRoot === node.name) {
+          return node;
+        }
+        
+        // Check each child
+        for (const child of node.children) {
+          const found = findNode(child, targetId);
+          if (found) return found;
+        }
+      }
+      
+      return null;
+    };
+    
+    // Search from the root of the tree
+    const node = this.originalTreeData ? findNode(this.originalTreeData, nodeId) : null;
+    
+    // A node is a folder if it has children array
+    return node ? !!node.children : false;
   }
 
   /**
