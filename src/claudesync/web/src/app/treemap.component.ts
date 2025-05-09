@@ -23,6 +23,9 @@ declare const Plotly: any;
   styleUrls: ['./treemap.component.css']
 })
 export class TreemapComponent implements OnDestroy {
+  hiddenFolders: Set<string> = new Set<string>();
+  hasHiddenFolders: boolean = false;
+
   @Input() set syncData(data: SyncData | null) {
     if (data) {
       console.debug('TreemapComponent received new syncData');
@@ -193,6 +196,12 @@ export class TreemapComponent implements OnDestroy {
 
     const processNode = (node: any, parentId: string) => {
       const currentId = parentId ? `${parentId}/${node.name}` : node.name;
+
+      // Skip this node and its children if it's in the hiddenFolders set
+      // (but only if it's not the root node)
+      if (currentId !== 'root' && this.hiddenFolders.has(this.getPathWithoutRoot(currentId))) {
+        return;
+      }
 
       data.labels.push(node.name);
       data.parents.push(parentId);
@@ -530,72 +539,107 @@ Status: %{customdata.included}<br>
     }
     return '';
   }
-  
+
+  private getPathWithoutRoot(path: string): string {
+    // Remove the "root/" prefix if it exists
+    return path.replace(/^root\//, '');
+  }
+
   /**
    * Determines if the selected node is a folder based on its path
    */
   isSelectedNodeFolder(): boolean {
     if (!this.selectedNode) return false;
-    
+
     // Simple check - if the node doesn't have a file extension, it's likely a folder
     // Could improve this by checking if it has children in the tree structure
     const nodePath = this.selectedNode.path;
     const lastSegment = nodePath.split('/').pop() || '';
-    
+
     // No file extension and not empty
     return lastSegment.indexOf('.') === -1 && lastSegment.length > 0;
   }
-  
+
   /**
    * Load all files in the selected folder, including those not included in the sync
    */
+  hideSelectedFolder(): void {
+    if (!this.selectedNode || !this.isSelectedNodeFolder()) {
+      return;
+    }
+
+    const folderPath = this.getSelection();
+    this.hiddenFolders.add(folderPath);
+    this.hasHiddenFolders = true;
+
+    // Update the visualization
+    this.updateTreemap();
+
+    // Clear selection after hiding
+    this.clearSelection();
+
+    this.notificationService.info(`Folder "${folderPath}" hidden from view`);
+  }
+
+  resetView(): void {
+    if (this.hiddenFolders.size === 0) {
+      return;
+    }
+
+    this.hiddenFolders.clear();
+    this.hasHiddenFolders = false;
+    this.updateTreemap();
+
+    this.notificationService.info('View reset, all folders are now visible');
+  }
+
   loadAllFolderContents(): void {
     console.log('loadAllFolderContents called');
-    
+
     if (!this.selectedNode) {
       console.warn('No node selected');
       this.notificationService.warning('No folder selected');
       return;
     }
-    
+
     if (!this.isSelectedNodeFolder()) {
       console.warn(`Selected node is not a folder: ${this.selectedNode.path}`);
       this.notificationService.warning('Selected node is not a folder');
       return;
     }
-    
+
     // Get the folder path without the root prefix
     const folderPath = this.getSelection();
     console.log(`Loading all files for folder: "${folderPath}"`);
-    
+
     this.notificationService.info(`Loading all files in ${folderPath}...`);
-    
+
     this.fileDataService.getFolderContents(folderPath)
       .subscribe({
         next: (response) => {
           console.log('Folder contents API response:', response);
-          
+
           if (!response.success) {
             console.error('API reported failure');
             this.notificationService.error('Failed to load folder contents');
             return;
           }
-          
+
           if (!response.contents) {
             console.error('API response missing contents data');
             this.notificationService.error('Invalid response format');
             return;
           }
-          
+
           console.log(`Received folder contents with ${response.contents.children?.length || 0} items`);
-          
+
           // Update the folder contents in the treemap
           this.updateFolderContentsInTreemap(folderPath, response.contents);
-          
+
           // Refresh the visualization
           console.log('Updating treemap visualization');
           this.updateTreemap();
-          
+
           this.notificationService.success('Folder contents loaded');
         },
         error: (error) => {
@@ -604,24 +648,24 @@ Status: %{customdata.included}<br>
         }
       });
   }
-  
+
   /**
    * Update a specific folder's contents in the treemap data structure
    */
   private updateFolderContentsInTreemap(folderPath: string, newContents: any): void {
     console.log('updateFolderContentsInTreemap - folderPath:', folderPath);
     console.log('updateFolderContentsInTreemap - newContents structure:', newContents ? (newContents.children ? `Has ${newContents.children.length} children` : 'No children array') : 'null');
-    
+
     if (!this.originalTreeData) {
       console.error('originalTreeData is null or undefined, cannot update treemap');
       return;
     }
-    
+
     // Clone the original data to avoid reference issues
     const updatedData = JSON.parse(JSON.stringify(this.originalTreeData));
-    console.log('updateFolderContentsInTreemap - cloned originalTreeData structure:', 
+    console.log('updateFolderContentsInTreemap - cloned originalTreeData structure:',
       `Name: ${updatedData.name}, Children: ${updatedData.children ? updatedData.children.length : 0}`);
-    
+
     // Log the first level of children to understand the structure
     if (updatedData.children && updatedData.children.length > 0) {
       console.log('First level children names:');
@@ -635,11 +679,11 @@ Status: %{customdata.included}<br>
         }
       });
     }
-    
+
     // Find the target folder and replace its children
     const pathParts = folderPath.split('/');
     console.log('updateFolderContentsInTreemap - pathParts:', pathParts);
-    
+
     // Handle root folder case
     if (folderPath === '' || folderPath === '.') {
       console.log('updateFolderContentsInTreemap - handling root folder case');
@@ -653,25 +697,25 @@ Status: %{customdata.included}<br>
       }
       return;
     }
-    
+
     // MODIFIED: Find node by path using a different approach
     // Instead of expecting the tree to match exactly the path parts,
     // search for matching nodes at each level of the tree
     const findNodeByPath = (node: any, path: string): any => {
       console.log(`Finding node for path: ${path}`);
-      
+
       // Handle root case
       if (path === '' || path === '.') {
         console.log('Returning root node');
         return node;
       }
-      
+
       // This is a direct match
       if (node.name === path) {
         console.log(`Found exact match for ${path}`);
         return node;
       }
-      
+
       // Check if any children have the full path or match the pattern
       if (node.children) {
         // First try to find the exact path in any child
@@ -680,7 +724,7 @@ Status: %{customdata.included}<br>
             console.log(`Found exact match for ${path} in children`);
             return child;
           }
-          
+
           // Check if the node name ends with the last part of the path
           const pathParts = path.split('/');
           const lastPart = pathParts[pathParts.length - 1];
@@ -689,7 +733,7 @@ Status: %{customdata.included}<br>
             return child;
           }
         }
-        
+
         // Then check recursively in all children
         for (const child of node.children) {
           if (child.children && child.children.length > 0) {
@@ -702,14 +746,14 @@ Status: %{customdata.included}<br>
           }
         }
       }
-      
+
       // If we didn't find a matching node, check if we should go down a level
       // based on the first part of the path
       const pathParts = path.split('/');
       if (pathParts.length > 1) {
         const firstPart = pathParts[0];
         const remainingPath = pathParts.slice(1).join('/');
-        
+
         // Try to find a child that matches the first part
         if (node.children) {
           for (const child of node.children) {
@@ -723,7 +767,7 @@ Status: %{customdata.included}<br>
           }
         }
       }
-      
+
       // Last attempt: If this is a path with no slashes, search all children deeply
       if (!path.includes('/') && node.children) {
         for (const child of node.children) {
@@ -736,16 +780,16 @@ Status: %{customdata.included}<br>
           }
         }
       }
-      
+
       return null;
     };
-    
+
     // Helper function to search deeply for a node by name
     const findDeepNodeByName = (node: any, name: string): any => {
       if (node.name === name) {
         return node;
       }
-      
+
       if (node.children) {
         for (const child of node.children) {
           const found = findDeepNodeByName(child, name);
@@ -754,13 +798,13 @@ Status: %{customdata.included}<br>
           }
         }
       }
-      
+
       return null;
     };
-    
+
     // Try to find the target node
     const targetNode = findNodeByPath(updatedData, folderPath);
-    
+
     if (targetNode) {
       console.log(`Found target node: ${targetNode.name} with ${targetNode.children ? targetNode.children.length : 0} existing children`);
       if (newContents && newContents.children) {
@@ -780,7 +824,7 @@ Status: %{customdata.included}<br>
         });
       }
     }
-    
+
     // Replace the original data with the updated version regardless of whether we found the node
     this.originalTreeData = updatedData;
     console.log('updateFolderContentsInTreemap - completed, originalTreeData updated');
@@ -872,6 +916,10 @@ Status: %{customdata.included}<br>
           action: 'removeExclude',
           pattern: path
         });
+        break;
+
+      case 'hideFolder':
+        this.hideSelectedFolder();
         break;
 
       case 'clear':

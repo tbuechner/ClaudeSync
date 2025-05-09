@@ -113,6 +113,34 @@
   background-color: #ede9fe;
 }
 
+.hide-folder-btn {
+  border-color: #e5e7eb;
+  color: #6b7280;
+  background-color: #f9fafb;
+}
+
+.hide-folder-btn:hover {
+  background-color: #f3f4f6;
+}
+
+.reset-view-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  color: #4b5563;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.reset-view-btn:hover {
+  background-color: #e5e7eb;
+}
+
 
 .treemap-container {
   background-color: white;
