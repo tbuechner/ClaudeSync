@@ -60,7 +60,7 @@
 
         <!-- Configuration Group -->
         <div class="action-group configuration-operations">
-          <div class="group-label">Configuration</div>
+          <span class="group-label">CONFIG</span>
           <div class="group-buttons">
             <button class="action-btn include-btn" (click)="handleNodeAction('addToIncludes')">
               <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
@@ -98,7 +98,7 @@
 
         <!-- Visibility Group -->
         <div class="action-group visibility-operations" *ngIf="isSelectedNodeFolder()">
-          <div class="group-label">Visibility</div>
+          <span class="group-label">VISIBILITY</span>
           <div class="group-buttons">
             <button class="action-btn show-all-btn" (click)="loadAllFolderContents()">
               <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
@@ -107,7 +107,7 @@
                 <path d="M9 13H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M9 17H12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
-              Show All Files
+              Load All Files
             </button>
             <button class="action-btn hide-folder-btn" (click)="handleNodeAction('hideFolder')">
               <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
