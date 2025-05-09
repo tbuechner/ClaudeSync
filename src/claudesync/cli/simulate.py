@@ -855,6 +855,7 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
     def _get_complete_folder_contents(self, project_root, folder_path, files_to_sync):
         """
         Get complete contents of a folder including both included and excluded files.
+        Recursively traverses all subfolders to build a complete tree.
         
         Args:
             project_root: Base directory of the project
@@ -879,54 +880,64 @@ class SyncDataHandler(http.server.SimpleHTTPRequestHandler):
         full_folder_path = os.path.join(project_root, folder_path)
         logger.debug(f"Full folder path: {full_folder_path}")
         
-        # List all files and subdirectories in the folder
-        try:
-            items = os.listdir(full_folder_path)
-            logger.debug(f"Found {len(items)} items in folder")
-            
-            # Process subdirectories first
-            for item in sorted(items):
-                item_path = os.path.join(full_folder_path, item)
-                rel_path = os.path.relpath(item_path, project_root)
-                rel_path = rel_path.replace('\\', '/')  # Normalize path separators
+        # Create a recursive function to process directories
+        def process_directory(dir_path, rel_dir_path, parent_node):
+            try:
+                items = os.listdir(dir_path)
+                logger.debug(f"Found {len(items)} items in {rel_dir_path}")
                 
-                # Skip hidden files starting with . on Unix systems
-                if item.startswith('.') and item != '.':
-                    logger.debug(f"Skipping hidden item: {item}")
-                    continue
+                # Process all items in the directory
+                for item in sorted(items):
+                    item_path = os.path.join(dir_path, item)
+                    rel_path = os.path.relpath(item_path, project_root)
+                    rel_path = rel_path.replace('\\', '/')  # Normalize path separators
                     
-                if os.path.isdir(item_path):
-                    # Process directory
-                    logger.debug(f"Processing directory: {item}")
-                    dir_node = {
-                        'name': item,
-                        'children': []
-                    }
-                    
-                    # Check if any files in this directory are included
-                    included_prefix = rel_path + '/'
-                    has_included_files = any(
-                        f.startswith(included_prefix) for f in files_to_sync.keys()
-                    )
-                    logger.debug(f"Directory {item} included status: {has_included_files}")
-                    
-                    dir_node['included'] = has_included_files
-                    result_tree['children'].append(dir_node)
-                else:
-                    # Process file
-                    logger.debug(f"Processing file: {item}")
-                    file_size = os.path.getsize(item_path)
-                    included = rel_path in files_to_sync
-                    logger.debug(f"File {item} size: {file_size}, included: {included}")
-                    
-                    file_node = {
-                        'name': item,
-                        'size': file_size,
-                        'included': included
-                    }
-                    result_tree['children'].append(file_node)
-            
-            logger.debug(f"Returning folder tree with {len(result_tree['children'])} children")
+                    # Skip hidden files starting with . on Unix systems
+                    if item.startswith('.') and item != '.':
+                        logger.debug(f"Skipping hidden item: {item}")
+                        continue
+                        
+                    if os.path.isdir(item_path):
+                        # Process directory
+                        logger.debug(f"Processing directory: {rel_path}")
+                        dir_node = {
+                            'name': item,
+                            'children': []
+                        }
+                        
+                        # Check if any files in this directory are included
+                        included_prefix = rel_path + '/'
+                        has_included_files = any(
+                            f.startswith(included_prefix) for f in files_to_sync.keys()
+                        )
+                        logger.debug(f"Directory {item} included status: {has_included_files}")
+                        
+                        dir_node['included'] = has_included_files
+                        parent_node['children'].append(dir_node)
+                        
+                        # Recursively process this directory
+                        process_directory(item_path, rel_path, dir_node)
+                    else:
+                        # Process file
+                        logger.debug(f"Processing file: {rel_path}")
+                        file_size = os.path.getsize(item_path)
+                        included = rel_path in files_to_sync
+                        logger.debug(f"File {item} size: {file_size}, included: {included}")
+                        
+                        file_node = {
+                            'name': item,
+                            'size': file_size,
+                            'included': included
+                        }
+                        parent_node['children'].append(file_node)
+            except Exception as e:
+                logger.error(f"Error processing directory {rel_dir_path}: {str(e)}")
+                logger.debug(traceback.format_exc())
+        
+        # Start recursive processing from the root folder
+        try:
+            process_directory(full_folder_path, folder_path, result_tree)
+            logger.debug(f"Completed folder traversal. Root has {len(result_tree['children'])} direct children")
             return result_tree
         except Exception as e:
             logger.error(f"Error getting folder contents: {str(e)}")
