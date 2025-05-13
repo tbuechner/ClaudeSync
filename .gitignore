@@ -192,3 +192,7 @@ out/
 .claudesync/active_project.json
 .venv
 .github
+
+#obsidian
+.obsidian
+.smart-env
