@@ -27,7 +27,7 @@ import {GlobalLoadingComponent} from './global-loading.component';
   styleUrls: ['./app.component.css'],
   providers: [FileDataService]
 })
-export class AppComponent implements OnInit {  
+export class AppComponent implements OnInit {
   isTreemapViewModified = false;
   configVisible = false;
   claudeignore = '';
@@ -54,7 +54,7 @@ export class AppComponent implements OnInit {
   ngOnInit() {
     this.loadProjects();
   }
-  
+
   /**
    * Checks if the treemap view has been modified
    * Used to update the Reload button appearance
@@ -176,6 +176,9 @@ export class AppComponent implements OnInit {
 
           // Reset the treemap view modified state
           this.isTreemapViewModified = false;
+
+          // Force button state to update by explicitly calling checkTreemapViewModified
+          this.checkTreemapViewModified();
 
           // Handle timeout condition
           if (data.timeout) {
