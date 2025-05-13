@@ -55,28 +55,39 @@ class TokenCounter:
             logger.error(f"Error reading file {file_path}: {e}")
             return 0, False
 
-def count_project_tokens(config, files_config, root_path: str) -> Dict[str, int]:
+def count_project_tokens(config, files_config, root_path: str) -> Dict[str, any]:
     """
     Count tokens in all files that would be synchronized.
-    
+
     Args:
         config: Configuration manager instance
         files_config: Files configuration dictionary
         root_path (str): Root path of the project
-        
+
     Returns:
-        Dict[str, int]: Dictionary mapping file paths to token counts
+        Dict: Dictionary with token counts or timeout information
     """
     from claudesync.utils import get_local_files
-    
+
     # Get files that would be synced using existing logic
     files_to_sync = get_local_files(config, root_path, files_config)
-    
+
+    # Handle timeout case
+    if files_to_sync is None:
+        logger.warning("Token counting aborted due to file traversal timeout")
+        return {
+            'timeout': True,
+            'message': "File traversal exceeded time limit (5s). Token counting aborted.",
+            'files': {},
+            'total': 0,
+            'failed_files': []
+        }
+
     token_counter = TokenCounter()
     token_counts = {}
     total_tokens = 0
     failed_files = []
-    
+
     for rel_path in files_to_sync:
         full_path = os.path.join(root_path, rel_path)
         tokens, success = token_counter.count_file_tokens(full_path)
@@ -85,8 +96,9 @@ def count_project_tokens(config, files_config, root_path: str) -> Dict[str, int]
             total_tokens += tokens
         else:
             failed_files.append(rel_path)
-            
+
     return {
+        'timeout': False,
         'files': token_counts,
         'total': total_tokens,
         'failed_files': failed_files

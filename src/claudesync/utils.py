@@ -202,7 +202,15 @@ def should_skip_directory(dir_path: str, base_path: str, gitignore, claudeignore
 def get_local_files(config, root_path, files_config):
     """
     Get local files matching the patterns in files configuration with optimized directory traversal.
+    Returns None if the operation takes longer than 5 seconds.
     """
+    # Define time limit (5 seconds)
+    TIME_LIMIT = 5.0
+    # Record start time (already exists, but we'll make this explicit)
+    traversal_start = time_module.time()
+    # Counter for processed files
+    files_processed = 0
+
     use_ignore_files = files_config.get("use_ignore_files", True)
     gitignore = load_gitignore(root_path) if use_ignore_files else None
     claudeignore = load_claudeignore(root_path) if use_ignore_files else None
@@ -224,17 +232,28 @@ def get_local_files(config, root_path, files_config):
     logger.debug(f"Starting file system traversal at {root_path}")
     logger.debug(f"Using ignore files: {use_ignore_files}")
     logger.debug(f"Using push roots: {push_roots}")
-    traversal_start = time_module.time()
 
     # If push_roots is specified, only traverse those directories
     roots_to_traverse = [os.path.join(root_path, root) for root in push_roots] if push_roots else [root_path]
 
     for base_root in roots_to_traverse:
+        # Check time elapsed before processing each root directory
+        current_time = time_module.time()
+        if current_time - traversal_start > TIME_LIMIT:
+            logger.warning(f"Time limit exceeded ({current_time - traversal_start:.2f}s) before processing root: {base_root}")
+            return None
+
         if not os.path.exists(base_root):
             logger.warning(f"Specified root path does not exist: {base_root}")
             continue
 
         for root, dirs, filenames in os.walk(base_root, topdown=True):
+            # Check time limit during directory traversal
+            current_time = time_module.time()
+            if current_time - traversal_start > TIME_LIMIT:
+                logger.warning(f"Time limit exceeded ({current_time - traversal_start:.2f}s) during directory traversal: {root}")
+                return None
+
             # Filter out excluded directories first
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
@@ -251,6 +270,15 @@ def get_local_files(config, root_path, files_config):
                 ]
 
             for filename in filenames:
+                files_processed += 1
+
+                # Check time limit every 20 files
+                if files_processed % 20 == 0:
+                    current_time = time_module.time()
+                    if current_time - traversal_start > TIME_LIMIT:
+                        logger.warning(f"Time limit exceeded ({current_time - traversal_start:.2f}s) after processing {files_processed} files")
+                        return None
+
                 rel_path = os.path.relpath(os.path.join(root, filename), root_path)
 
                 if spec.match_file(rel_path):

@@ -1,40 +1,108 @@
-/* Animation for notification entry */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+/* Fixed container for notifications that doesn't affect page layout */
+.fixed-notifications-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  max-width: 24rem;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none; /* Let clicks pass through container */
 }
 
-/* Animation for notification exit */
-@keyframes fadeOut {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(100%);
-  }
+.notification-card {
+  width: 100%;
+  max-width: 20rem;
+  margin-bottom: 0.75rem;
+  pointer-events: auto; /* Make notifications clickable */
+  transform-origin: top right;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+.notification-content {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  position: relative;
 }
 
-.animate-fade-out {
-  animation: fadeOut 0.3s ease-in;
+.notification-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  flex-shrink: 0;
 }
 
-/* Optional: If you need to ensure notifications are clickable and don't interfere with content behind */
-.notification-container {
-  pointer-events: none;
+.notification-message {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
-.notification-container > * {
-  pointer-events: auto;
+.notification-close-btn {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  margin-left: 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s, background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.notification-close-btn:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Notification type styles */
+.notification-success {
+  background-color: rgba(52, 211, 153, 0.2);
+  border-left: 4px solid #10B981;
+  color: #064E3B;
+}
+
+.notification-success .notification-icon {
+  color: #10B981;
+}
+
+.notification-error {
+  background-color: rgba(248, 113, 113, 0.2);
+  border-left: 4px solid #EF4444;
+  color: #7F1D1D;
+}
+
+.notification-error .notification-icon {
+  color: #EF4444;
+}
+
+.notification-info {
+  background-color: rgba(96, 165, 250, 0.2);
+  border-left: 4px solid #3B82F6;
+  color: #1E3A8A;
+}
+
+.notification-info .notification-icon {
+  color: #3B82F6;
+}
+
+.notification-warning {
+  background-color: rgba(251, 191, 36, 0.2);
+  border-left: 4px solid #F59E0B;
+  color: #78350F;
+}
+
+.notification-warning .notification-icon {
+  color: #F59E0B;
 }

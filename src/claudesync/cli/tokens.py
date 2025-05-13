@@ -21,7 +21,7 @@ def format_token_count(count: int) -> str:
 @handle_errors
 def tokens(config, project, verbose):
     """Count tokens in files that would be synchronized.
-    
+
     If no project is specified, uses the active project.
     """
     if not project:
@@ -38,25 +38,33 @@ def tokens(config, project, verbose):
     project_root = config.get_project_root()
 
     click.echo(f"\nCounting tokens for project '{project}'...")
-    
+
     # Count tokens
     result = count_project_tokens(config, files_config, project_root)
-    
+
+    # Check for timeout
+    if result.get('timeout', False):
+        click.echo(f"\nError: {result.get('message', 'Timeout occurred during token counting')}")
+        click.echo("\nConsider narrowing your project scope by:")
+        click.echo("  - Adjusting includes/excludes patterns")
+        click.echo("  - Adding more patterns to .claudeignore")
+        return
+
     # Display results
     total_tokens = result['total']
     file_counts = result['files']
     failed_files = result['failed_files']
-    
+
     click.echo(f"\nTotal: {format_token_count(total_tokens)}")
     click.echo(f"Files processed: {len(file_counts)}")
-    
+
     if verbose and file_counts:
         click.echo("\nToken counts by file:")
         # Sort files by token count in descending order
         sorted_files = sorted(file_counts.items(), key=lambda x: x[1], reverse=True)
         for file_path, count in sorted_files:
             click.echo(f"  {format_token_count(count).ljust(15)} {file_path}")
-            
+
     if failed_files:
         click.echo(f"\nWarning: Failed to process {len(failed_files)} files:")
         for file_path in failed_files:

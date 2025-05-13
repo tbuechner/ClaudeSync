@@ -28,6 +28,7 @@ import {GlobalLoadingComponent} from './global-loading.component';
   providers: [FileDataService]
 })
 export class AppComponent implements OnInit {
+  isTreemapViewModified = false;
   configVisible = false;
   claudeignore = '';
   stats: SyncStats = {
@@ -36,6 +37,8 @@ export class AppComponent implements OnInit {
   };
 
   syncData: SyncData | null = null;
+  timeoutOccurred = false;
+  timeoutMessage = '';
 
   projects: Project[] = [];
   selectedProject: string = '';
@@ -50,6 +53,19 @@ export class AppComponent implements OnInit {
 
   ngOnInit() {
     this.loadProjects();
+  }
+
+  /**
+   * Checks if the treemap view has been modified
+   * Used to update the Reload button appearance
+   * @returns True if the treemap view has been modified (folders hidden or reloaded)
+   */
+  checkTreemapViewModified(): boolean {
+    // Cache the result to avoid repeatedly accessing the view component
+    if (this.treemapComponent && typeof this.treemapComponent.viewIsModified !== 'undefined') {
+      this.isTreemapViewModified = this.treemapComponent.viewIsModified;
+    }
+    return this.isTreemapViewModified;
   }
 
   loadProjects() {
@@ -70,17 +86,30 @@ export class AppComponent implements OnInit {
         },
         error: (error) => {
           console.error('Error loading projects:', error);
+          this.notificationService.error('Failed to load projects. Please try again.');
         }
       });
   }
 
   onProjectChange(projectPath: string) {
     this.selectedProject = projectPath;
-
     this.setSelectedProjectUrl();
 
     // Clear the current data before loading new project
     this.fileDataService.clearCache();
+
+    // Clear the treemap by setting syncData to null
+    this.syncData = null;
+
+    // Reset stats
+    this.stats = {
+      filesToSync: 0,
+      totalSize: '0 B'
+    };
+
+    // Reset timeout state when changing projects
+    this.timeoutOccurred = false;
+    this.timeoutMessage = '';
 
     this.fileDataService.setActiveProject(projectPath)
       .subscribe({
@@ -90,6 +119,7 @@ export class AppComponent implements OnInit {
         },
         error: (error) => {
           console.error('Error setting active project:', error);
+          this.notificationService.error('Failed to set active project. Please try again.');
         }
       });
   }
@@ -112,9 +142,20 @@ export class AppComponent implements OnInit {
           this.projectConfig = data.project;
           this.claudeignore = data.claudeignore;
           this.stats = data.stats;
+
+          // Handle timeout condition
+          if (data.timeout) {
+            this.timeoutOccurred = true;
+            this.timeoutMessage = data.timeoutMessage || 'File traversal timed out. Your project may have too many files to process.';
+            this.notificationService.warning(this.timeoutMessage);
+          } else {
+            this.timeoutOccurred = false;
+            this.timeoutMessage = '';
+          }
         },
         error: (error) => {
           console.error('Error loading data:', error);
+          this.notificationService.error('Failed to load project data. Please try again.');
         }
       });
   }
@@ -132,9 +173,26 @@ export class AppComponent implements OnInit {
           this.projectConfig = data.project;
           this.claudeignore = data.claudeignore;
           this.stats = data.stats;
+
+          // Reset the treemap view modified state
+          this.isTreemapViewModified = false;
+
+          // Force button state to update by explicitly calling checkTreemapViewModified
+          this.checkTreemapViewModified();
+
+          // Handle timeout condition
+          if (data.timeout) {
+            this.timeoutOccurred = true;
+            this.timeoutMessage = data.timeoutMessage || 'File traversal timed out. Your project may have too many files to process.';
+            this.notificationService.warning(this.timeoutMessage);
+          } else {
+            this.timeoutOccurred = false;
+            this.timeoutMessage = '';
+          }
         },
         error: (error) => {
           console.error('Error loading data:', error);
+          this.notificationService.error('Failed to reload project data. Please try again.');
         }
       });
   }
@@ -146,6 +204,13 @@ export class AppComponent implements OnInit {
   }
 
   push() {
+    // If timeout occurred, confirm before pushing
+    if (this.timeoutOccurred) {
+      if (!confirm('File traversal timed out, which means not all files may be included. Do you still want to push?')) {
+        return;
+      }
+    }
+
     this.fileDataService.push()
       .subscribe({
         next: (response) => {

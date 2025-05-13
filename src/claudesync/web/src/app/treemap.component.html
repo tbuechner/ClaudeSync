@@ -2,16 +2,24 @@
   <div>
     <!-- Header and treemap content -->
     <div class="header-container">
-      <h2>File Distribution</h2>
+      <div class="header-left">
+        <h2>File Distribution</h2>
+        <div class="treemap-legend">
+          <div class="legend-item">
+            <div class="color-swatch included"></div>
+            <span>Included files</span>
+          </div>
+          <div class="legend-item">
+            <div class="color-swatch partial"></div>
+            <span>Partially included</span>
+          </div>
+          <div class="legend-item">
+            <div class="color-swatch excluded"></div>
+            <span>Excluded files</span>
+          </div>
+        </div>
+      </div>
       <div class="header-actions">
-        <label class="filter-toggle">
-          <input
-            type="checkbox"
-            [(ngModel)]="showOnlyIncluded"
-            (ngModelChange)="onShowOnlyIncludedChange()"
-            class="filter-checkbox">
-          Show only included files
-        </label>
         <button
           class="toggle-btn"
           (click)="showFileList = !showFileList">
@@ -36,41 +44,80 @@
         </button>
       </div>
       <div class="action-buttons">
-        <button class="action-btn copy-btn" (click)="handleNodeAction('copy')">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke="currentColor" stroke-width="2" fill="none"/>
-          </svg>
-          Copy Path
-        </button>
-        <button class="action-btn include-btn" (click)="handleNodeAction('addToIncludes')">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Add to Includes
-        </button>
-        <button class="action-btn remove-btn" (click)="handleNodeAction('removeFromIncludes')">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Remove from Includes
-        </button>
-        <button class="action-btn exclude-btn" (click)="handleNodeAction('addToExcludes')">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M4.93 4.93l14.14 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Add to Excludes
-        </button>
-        <button class="action-btn unexclude-btn" (click)="handleNodeAction('removeFromExcludes')">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M8 12l3 3 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Remove from Excludes
-        </button>
+        <!-- Path Operations Group -->
+        <div class="action-group path-operations">
+          <button class="action-btn copy-btn" (click)="handleNodeAction('copy')">
+            <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+            Copy Path
+          </button>
+        </div>
+
+        <!-- Vertical Separator -->
+        <div class="action-separator"></div>
+
+        <!-- Configuration Group -->
+        <div class="action-group configuration-operations">
+          <span class="group-label">CONFIG</span>
+          <div class="group-buttons">
+            <button class="action-btn include-btn" (click)="handleNodeAction('addToIncludes')">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Add to Includes
+            </button>
+            <button class="action-btn remove-btn" (click)="handleNodeAction('removeFromIncludes')">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Remove from Includes
+            </button>
+            <button class="action-btn exclude-btn" (click)="handleNodeAction('addToExcludes')">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M4.93 4.93l14.14 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Add to Excludes
+            </button>
+            <button class="action-btn unexclude-btn" (click)="handleNodeAction('removeFromExcludes')">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M8 12l3 3 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Remove from Excludes
+            </button>
+          </div>
+        </div>
+
+        <!-- Vertical Separator -->
+        <div class="action-separator"></div>
+
+        <!-- Visibility Group -->
+        <div class="action-group visibility-operations" *ngIf="isSelectedNodeFolder()">
+          <span class="group-label">VISIBILITY</span>
+          <div class="group-buttons">
+            <button class="action-btn show-all-btn" (click)="loadAllFolderContents()">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <path d="M5 21C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M9 9H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 13H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 17H12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Load All Files
+            </button>
+            <button class="action-btn hide-folder-btn" (click)="handleNodeAction('hideFolder')">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Hide Folder
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 

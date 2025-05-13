@@ -1,5 +1,5 @@
 import {Injectable} from '@angular/core';
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpParams} from '@angular/common/http';
 import {Observable, of} from 'rxjs';
 import {map, tap} from 'rxjs/operators';
 import {Project} from './project-dropdown.component';
@@ -18,13 +18,6 @@ export interface ProjectConfig {
   excludes: string[];
 }
 
-export interface TreemapData {
-  labels: string[];
-  parents: string[];
-  values: number[];
-  ids: string[];
-}
-
 export interface FileContentResponse {
   content: string;
   error?: string;
@@ -35,6 +28,8 @@ export interface SyncData {
   project: ProjectConfig;
   stats: SyncStats;
   treemap: any;
+  timeout?: boolean;         // Indicates if the operation timed out
+  timeoutMessage?: string;   // Message explaining the timeout
 }
 
 @Injectable({
@@ -48,7 +43,7 @@ export class FileDataService {
 
   private getSyncDataFromApi(): Observable<SyncData> {
     return this.loadingService.withLoading(
-      this.http.get<SyncData>(`${this.baseUrl}/sync-data`).pipe(
+      this.http.get<SyncData>(`${this.baseUrl}/sync-data`, {}).pipe(
         tap(data => {
           this.cachedData = data;
           console.debug('Cached sync data updated');
@@ -63,27 +58,9 @@ export class FileDataService {
     return this.getSyncDataFromApi();
   }
 
-  getProjectConfig(): Observable<ProjectConfig> {
-    return this.getSyncData().pipe(
-      map(data => data.project)
-    );
-  }
-
-  getClaudeIgnore(): Observable<string> {
-    return this.getSyncData().pipe(
-      map(data => data.claudeignore)
-    );
-  }
-
   getStats(): Observable<SyncStats> {
     return this.getSyncData().pipe(
       map(data => data.stats)
-    );
-  }
-
-  getTreemapData(): Observable<any> {
-    return this.getSyncData().pipe(
-      map(data => data.treemap)
     );
   }
 
@@ -160,6 +137,19 @@ export class FileDataService {
   resolveDroppedFiles(files: DroppedFile[]): Observable<any> {
     return this.loadingService.withLoading(
       this.http.post(`${this.baseUrl}/resolve-dropped-files`, { files })
+    );
+  }
+
+  /**
+   * Get all files in a folder, including those not included in the sync
+   * @param folderPath Path to the folder relative to project root
+   * @returns Observable of the folder contents with inclusion status
+   */
+  getFolderContents(folderPath: string): Observable<any> {
+    return this.loadingService.withLoading(
+      this.http.get(`${this.baseUrl}/folder-contents`, {
+        params: { path: folderPath }
+      })
     );
   }
 }

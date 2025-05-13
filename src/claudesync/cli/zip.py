@@ -36,6 +36,15 @@ def zip(config, project, output):
     # Get files to include using patterns from files configuration
     local_files = get_local_files(config, project_root, files_config)
 
+    # Check if file traversal timed out
+    if local_files is None:
+        click.echo("Error: File traversal exceeded time limit (5s). Your project may have too many files to process.")
+        click.echo("Consider narrowing your project scope by:")
+        click.echo("  - Adjusting includes/excludes patterns")
+        click.echo("  - Using push_roots to limit directories")
+        click.echo("  - Adding more patterns to .claudeignore")
+        return
+
     if not local_files:
         click.echo("No files found to include in the ZIP file.")
         return
@@ -59,9 +68,9 @@ def zip(config, project, output):
     # Create the ZIP file
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zipf:
         with click.progressbar(
-            local_files.items(),
-            label=f"Creating ZIP file",
-            length=len(local_files),
+                local_files.items(),
+                label=f"Creating ZIP file",
+                length=len(local_files),
         ) as progress_bar:
             for rel_path, _ in progress_bar:
                 full_path = os.path.join(project_root, rel_path)

@@ -62,6 +62,15 @@
   background-color: #16a34a;
 }
 
+.btn-warning {
+  background-color: #f59e0b;
+  color: white;
+}
+
+.btn-warning:hover {
+  background-color: #d97706;
+}
+
 .icon {
   width: 1.25rem;
   height: 1.25rem;

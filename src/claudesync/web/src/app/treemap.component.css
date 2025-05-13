@@ -39,9 +39,54 @@
 
 .action-buttons {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
+  position: relative;
+}
+
+.action-group {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.action-separator {
+  width: 1px;
+  height: 30px;
+  background-color: #e5e7eb;
+  margin: 0 0.75rem;
+}
+
+.group-label {
+  font-size: 0.4rem;
+  font-weight: 500;
+  color: #94a3b8;
+  margin-right: 0.75rem;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.group-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+
+
+.path-operations {
+  margin-right: 0.5rem;
+}
+
+.configuration-operations {
+  margin: 0 0.5rem;
+}
+
+.visibility-operations {
+  margin-left: 0.5rem;
 }
 
 .action-btn {
@@ -103,6 +148,44 @@
   background-color: #eff6ff;
 }
 
+.show-all-btn {
+  border-color: #c084fc;
+  color: #7c3aed;
+  background-color: #f5f3ff;
+}
+
+.show-all-btn:hover {
+  background-color: #ede9fe;
+}
+
+.hide-folder-btn {
+  border-color: #e5e7eb;
+  color: #374151;
+  background-color: #f9fafb;
+}
+
+.hide-folder-btn:hover {
+  background-color: #f3f4f6;
+}
+
+.reset-view-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  color: #4b5563;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.reset-view-btn:hover {
+  background-color: #e5e7eb;
+}
+
 
 .treemap-container {
   background-color: white;
@@ -117,6 +200,45 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 1.5rem;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.treemap-legend {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.25rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.color-swatch {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 0.25rem;
+}
+
+.color-swatch.included {
+  background-color: #4f46e5; /* Indigo for included */
+}
+
+.color-swatch.partial {
+  background-color: #eab308; /* Yellow for partially included */
+}
+
+.color-swatch.excluded {
+  background-color: #94a3b8; /* Gray for excluded */
 }
 
 .header-actions {

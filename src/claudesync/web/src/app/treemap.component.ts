@@ -1,4 +1,4 @@
-import {Component, OnInit, OnDestroy, Input, EventEmitter, Output} from '@angular/core';
+import {Component, OnInit, OnDestroy, Input, EventEmitter, Output, ChangeDetectorRef} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {FileContentResponse, FileDataService, SyncData} from './file-data.service';
 import { HttpClient } from '@angular/common/http';
@@ -23,19 +23,60 @@ declare const Plotly: any;
   styleUrls: ['./treemap.component.css']
 })
 export class TreemapComponent implements OnDestroy {
+  /**
+   * Track if the view has been modified (folders hidden or reloaded via Show All Files)
+   * This is used by the parent component to change the Reload button appearance
+   */
+  private _viewIsModified = false;
+  
+  /**
+   * Public getter for the view modified state
+   * @returns True if the view has been modified (folders hidden or reloaded)
+   */
+  get viewIsModified(): boolean {
+    return this._viewIsModified;
+  }
+
   @Input() set syncData(data: SyncData | null) {
     if (data) {
       console.debug('TreemapComponent received new syncData');
-      this.originalTreeData = data.treemap;
-      this.updateTreemap();
+
+      // Check if there was a timeout in file traversal
+      this.timeoutOccurred = data.timeout || false;
+      this.timeoutMessage = data.timeoutMessage || 'File traversal timed out.';
+
+      if (!this.timeoutOccurred) {
+        this.originalTreeData = data.treemap;
+        this.updateTreemap();
+      } else {
+        // Clear treemap data to avoid displaying stale information
+        this.clearTreemap();
+        // Display message in the treemap area
+        const chartContainer = document.getElementById('file-treemap');
+        this.renderTimeoutMessage(chartContainer);
+      }
+    } else {
+      // Handle null data - clear the treemap
+      this.clearTreemap();
     }
   }
 
-  @Output() reloadRequired = new EventEmitter<void>();
+  private clearTreemap(): void {
+    this.originalTreeData = null;
+    this.files = [];
+    this.selectedNode = null;
+
+    // Clear the treemap visualization
+    const chartContainer = document.getElementById('file-treemap');
+    if (chartContainer) {
+      Plotly.purge(chartContainer);
+      // Add a loading indicator
+      chartContainer.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6b7280;font-size:1.125rem;">Loading project data...</div>';
+    }
+  }
 
   selectedNode: SelectedNode | null = null;
-  showOnlyIncluded = true;
-  showFileList = false
+  showFileList = false;
   private destroy$ = new Subject<void>();
   private baseUrl = 'http://localhost:4201/api';
 
@@ -50,12 +91,17 @@ export class TreemapComponent implements OnDestroy {
 
   filterText = '';
 
+  // New properties for timeout handling
+  timeoutOccurred = false;
+  timeoutMessage = '';
+
   private currentSubscription?: Subscription;
 
   constructor(
     private http: HttpClient,
     private fileDataService: FileDataService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private changeDetectorRef: ChangeDetectorRef
   ) {}
 
   ngOnDestroy() {
@@ -70,42 +116,76 @@ export class TreemapComponent implements OnDestroy {
     }
   }
 
-  private filterTree(node: any): any {
-    if (!this.showOnlyIncluded) {
-      return node;
-    }
-
-    if (!node.children) {
-      // Leaf node (file)
-      return node.included ? node : null;
-    }
-
-    // Filter children recursively
-    const filteredChildren = (node.children || [])
-      // @ts-ignore
-      .map(child => this.filterTree(child))
-      // @ts-ignore
-      .filter(child => child !== null);
-
-    if (filteredChildren.length === 0) {
-      return null;
-    }
-
-    return {
-      ...node,
-      children: filteredChildren
-    };
-  }
-
   public updateTreemap() {
     if (!this.originalTreeData) return;
 
-    const filteredData = this.filterTree(this.originalTreeData);
-    if (filteredData) {
-      const plotlyData = this.flattenTree(filteredData);
-      this.renderTreemap(plotlyData);
-      this.updateFilesList(this.originalTreeData);
-    }
+    const plotlyData = this.flattenTree(this.originalTreeData);
+    this.renderTreemap(plotlyData);
+    this.updateFilesList(this.originalTreeData);
+  }
+
+  // New method to render timeout message
+  private renderTimeoutMessage(container: HTMLElement | null) {
+    if (!container) return;
+
+    // Create message element
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'timeout-message';
+    messageDiv.style.width = '100%';
+    messageDiv.style.height = '100%';
+    messageDiv.style.display = 'flex';
+    messageDiv.style.flexDirection = 'column';
+    messageDiv.style.alignItems = 'center';
+    messageDiv.style.justifyContent = 'center';
+    messageDiv.style.textAlign = 'center';
+    messageDiv.style.padding = '2rem';
+
+    // Create icon element
+    const iconDiv = document.createElement('div');
+    iconDiv.innerHTML = `
+      <svg viewBox="0 0 24 24" width="48" height="48" style="margin-bottom: 1rem; color: #f59e0b;">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"
+              fill="currentColor" />
+      </svg>
+    `;
+
+    // Create heading
+    const heading = document.createElement('h3');
+    heading.style.fontSize = '1.25rem';
+    heading.style.fontWeight = '600';
+    heading.style.marginBottom = '0.75rem';
+    heading.style.color = '#1e293b';
+    heading.textContent = 'File Traversal Timeout';
+
+    // Create message text
+    const message = document.createElement('p');
+    message.style.fontSize = '1rem';
+    message.style.color = '#64748b';
+    message.style.maxWidth = '600px';
+    message.textContent = this.timeoutMessage;
+
+    // Create suggestions
+    const suggestions = document.createElement('div');
+    suggestions.style.marginTop = '1.5rem';
+    suggestions.style.fontSize = '0.875rem';
+    suggestions.style.color = '#64748b';
+    suggestions.innerHTML = `
+      <p><strong>Suggestions:</strong></p>
+      <ul style="text-align: left; margin-top: 0.5rem;">
+        <li>Use more specific include patterns in your project configuration</li>
+        <li>Add more exclude patterns or update your .claudeignore file</li>
+      </ul>
+    `;
+
+    // Assemble the message
+    messageDiv.appendChild(iconDiv);
+    messageDiv.appendChild(heading);
+    messageDiv.appendChild(message);
+    messageDiv.appendChild(suggestions);
+
+    // Clear and add to container
+    container.innerHTML = '';
+    container.appendChild(messageDiv);
   }
 
   private flattenTree(node: any, parentId: string = ''): TreemapData {
@@ -222,10 +302,6 @@ export class TreemapComponent implements OnDestroy {
   get filteredFiles(): FileInfo[] {
     let filtered = this.files;
 
-    if (this.showOnlyIncluded) {
-      filtered = filtered.filter(f => f.included);
-    }
-
     if (this.filterText.trim()) {
       const searchText = this.filterText.toLowerCase();
       filtered = filtered.filter(f =>
@@ -314,6 +390,12 @@ export class TreemapComponent implements OnDestroy {
     const chartContainer = document.getElementById('file-treemap');
     if (!chartContainer) {
       console.warn('Chart container not found');
+      return;
+    }
+
+    // Don't attempt to render if timeout occurred
+    if (this.timeoutOccurred) {
+      this.renderTimeoutMessage(chartContainer);
       return;
     }
 
@@ -463,6 +545,375 @@ Status: %{customdata.included}<br>
     return '';
   }
 
+  private getPathWithoutRoot(path: string): string {
+    // Remove the "root/" prefix if it exists
+    return path.replace(/^root\//, '');
+  }
+
+  /**
+   * Determines if the selected node is a folder based on the tree structure
+   */
+  isSelectedNodeFolder(): boolean {
+    if (!this.selectedNode) return false;
+    
+    // Get node ID from selected path
+    const nodeId = this.selectedNode.path;
+    
+    // Look for this node in original tree data
+    const findNode = (node: any, targetId: string): any => {
+      // Direct match for this node
+      if (node.name === targetId || targetId.endsWith('/' + node.name)) {
+        return node;
+      }
+      
+      // If this is a directory, search its children
+      if (node.children) {
+        // Check if the full path matches this node
+        const pathWithoutRoot = targetId.replace(/^root\//, '');
+        if (pathWithoutRoot === node.name) {
+          return node;
+        }
+        
+        // Check each child
+        for (const child of node.children) {
+          const found = findNode(child, targetId);
+          if (found) return found;
+        }
+      }
+      
+      return null;
+    };
+    
+    // Search from the root of the tree
+    const node = this.originalTreeData ? findNode(this.originalTreeData, nodeId) : null;
+    
+    // A node is a folder if it has children array
+    return node ? !!node.children : false;
+  }
+
+  /**
+   * Load all files in the selected folder, including those not included in the sync
+   */
+  hideSelectedFolder(): void {
+    if (!this.selectedNode || !this.isSelectedNodeFolder()) {
+      return;
+    }
+
+    const folderPath = this.getSelection();
+    
+    // Remove the folder from the tree directly
+    this.removeNodeFromTree(this.originalTreeData, folderPath);
+    
+    // Mark view as modified
+    this._viewIsModified = true;
+    
+    // Update the visualization
+    this.updateTreemap();
+
+    // Clear selection after hiding
+    this.clearSelection();
+
+    this.notificationService.info(`Folder "${folderPath}" hidden from view`);
+  }
+  
+  /**
+   * Recursively searches for and removes a node from the tree
+   * @param treeNode The current tree node to search in
+   * @param targetPath The path of the node to remove
+   * @param currentPath The path of the current node being processed
+   * @returns True if the node was found and removed, false otherwise
+   */
+  private removeNodeFromTree(treeNode: any, targetPath: string, currentPath: string = ''): boolean {
+    if (!treeNode || !treeNode.children) {
+      return false;
+    }
+    
+    for (let i = 0; i < treeNode.children.length; i++) {
+      const child = treeNode.children[i];
+      const childPath = currentPath ? `${currentPath}/${child.name}` : child.name;
+      
+      // If this is the node we're looking for, remove it
+      if (childPath === targetPath) {
+        treeNode.children.splice(i, 1); // Remove the child at index i
+        return true;
+      }
+      
+      // Otherwise, check children recursively
+      if (child.children && this.removeNodeFromTree(child, targetPath, childPath)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  resetView(): void {
+    // Reload data from the server instead of keeping a local copy
+    this.notificationService.info('Reloading data from server...');
+    
+    // Reset the view modified flag
+    this._viewIsModified = false;
+    
+    // Clear current selection to avoid references to nodes that might not exist after reload
+    this.clearSelection();
+    
+    // Refresh data from the server
+    this.fileDataService.refreshCache().subscribe({
+      next: (data) => {
+        // Data will be automatically processed via the syncData setter
+        this.notificationService.success('View reset, all folders are now visible');
+      },
+      error: (error) => {
+        console.error('Error refreshing data:', error);
+        this.notificationService.error('Failed to reset view: ' + (error.message || 'Unknown error'));
+        
+        // Even if there's an error, the view is no longer in a modified state
+        // because we're starting from scratch
+        this._viewIsModified = false;
+      }
+    });
+  }
+
+  loadAllFolderContents(): void {
+    console.log('loadAllFolderContents called');
+
+    if (!this.selectedNode) {
+      console.warn('No node selected');
+      this.notificationService.warning('No folder selected');
+      return;
+    }
+
+    if (!this.isSelectedNodeFolder()) {
+      console.warn(`Selected node is not a folder: ${this.selectedNode.path}`);
+      this.notificationService.warning('Selected node is not a folder');
+      return;
+    }
+
+    // Get the folder path without the root prefix
+    const folderPath = this.getSelection();
+    console.log(`Loading all files for folder: "${folderPath}"`);
+
+    this.notificationService.info(`Loading all files in ${folderPath}...`);
+
+    this.fileDataService.getFolderContents(folderPath)
+      .subscribe({
+        next: (response) => {
+          console.log('Folder contents API response:', response);
+
+          if (!response.success) {
+            console.error('API reported failure');
+            this.notificationService.error('Failed to load folder contents');
+            return;
+          }
+
+          if (!response.contents) {
+            console.error('API response missing contents data');
+            this.notificationService.error('Invalid response format');
+            return;
+          }
+
+          console.log(`Received folder contents with ${response.contents.children?.length || 0} items`);
+
+          // Update the folder contents in the treemap
+          this.updateFolderContentsInTreemap(folderPath, response.contents);
+          
+          // Mark view as modified when a folder is reloaded
+          this._viewIsModified = true;
+
+          // Refresh the visualization
+          console.log('Updating treemap visualization');
+          this.updateTreemap();
+
+          this.notificationService.success('Folder contents loaded');
+        },
+        error: (error) => {
+          console.error('Error loading folder contents:', error);
+          this.notificationService.error('Failed to load folder contents: ' + (error.message || 'Unknown error'));
+        }
+      });
+  }
+
+  /**
+   * Update a specific folder's contents in the treemap data structure
+   */
+  private updateFolderContentsInTreemap(folderPath: string, newContents: any): void {
+    console.log('updateFolderContentsInTreemap - folderPath:', folderPath);
+    console.log('updateFolderContentsInTreemap - newContents structure:', newContents ? (newContents.children ? `Has ${newContents.children.length} children` : 'No children array') : 'null');
+
+    if (!this.originalTreeData) {
+      console.error('originalTreeData is null or undefined, cannot update treemap');
+      return;
+    }
+
+    // Clone the original data to avoid reference issues
+    const updatedData = JSON.parse(JSON.stringify(this.originalTreeData));
+    console.log('updateFolderContentsInTreemap - cloned originalTreeData structure:',
+      `Name: ${updatedData.name}, Children: ${updatedData.children ? updatedData.children.length : 0}`);
+
+    // Log the first level of children to understand the structure
+    if (updatedData.children && updatedData.children.length > 0) {
+      console.log('First level children names:');
+      updatedData.children.forEach((child: any, index: number) => {
+        console.log(`  Child ${index}: ${child.name}`);
+        if (child.children && child.children.length > 0) {
+          console.log(`    Subchildren of ${child.name}:`);
+          child.children.forEach((subchild: any, subindex: number) => {
+            console.log(`      Subchild ${subindex}: ${subchild.name}`);
+          });
+        }
+      });
+    }
+
+    // Find the target folder and replace its children
+    const pathParts = folderPath.split('/');
+    console.log('updateFolderContentsInTreemap - pathParts:', pathParts);
+
+    // Handle root folder case
+    if (folderPath === '' || folderPath === '.') {
+      console.log('updateFolderContentsInTreemap - handling root folder case');
+      if (newContents && newContents.children) {
+        console.log(`Replacing root's ${updatedData.children?.length || 0} children with ${newContents.children.length} new children`);
+        updatedData.children = newContents.children;
+        this.originalTreeData = updatedData;
+        console.log('updateFolderContentsInTreemap - updated root folder children');
+      } else {
+        console.error('newContents is missing children array');
+      }
+      return;
+    }
+
+    // MODIFIED: Find node by path using a different approach
+    // Instead of expecting the tree to match exactly the path parts,
+    // search for matching nodes at each level of the tree
+    const findNodeByPath = (node: any, path: string): any => {
+      console.log(`Finding node for path: ${path}`);
+
+      // Handle root case
+      if (path === '' || path === '.') {
+        console.log('Returning root node');
+        return node;
+      }
+
+      // This is a direct match
+      if (node.name === path) {
+        console.log(`Found exact match for ${path}`);
+        return node;
+      }
+
+      // Check if any children have the full path or match the pattern
+      if (node.children) {
+        // First try to find the exact path in any child
+        for (const child of node.children) {
+          if (child.name === path) {
+            console.log(`Found exact match for ${path} in children`);
+            return child;
+          }
+
+          // Check if the node name ends with the last part of the path
+          const pathParts = path.split('/');
+          const lastPart = pathParts[pathParts.length - 1];
+          if (child.name === lastPart) {
+            console.log(`Found match for last part ${lastPart} in children`);
+            return child;
+          }
+        }
+
+        // Then check recursively in all children
+        for (const child of node.children) {
+          if (child.children && child.children.length > 0) {
+            // Recursively check this child's children
+            const foundNode = findNodeByPath(child, path);
+            if (foundNode) {
+              console.log(`Found node for ${path} in subtree of ${child.name}`);
+              return foundNode;
+            }
+          }
+        }
+      }
+
+      // If we didn't find a matching node, check if we should go down a level
+      // based on the first part of the path
+      const pathParts = path.split('/');
+      if (pathParts.length > 1) {
+        const firstPart = pathParts[0];
+        const remainingPath = pathParts.slice(1).join('/');
+
+        // Try to find a child that matches the first part
+        if (node.children) {
+          for (const child of node.children) {
+            if (child.name === firstPart && child.children) {
+              console.log(`Descending into ${firstPart} to find ${remainingPath}`);
+              const foundNode = findNodeByPath(child, remainingPath);
+              if (foundNode) {
+                return foundNode;
+              }
+            }
+          }
+        }
+      }
+
+      // Last attempt: If this is a path with no slashes, search all children deeply
+      if (!path.includes('/') && node.children) {
+        for (const child of node.children) {
+          if (child.children && child.children.length > 0) {
+            const foundNode = findDeepNodeByName(child, path);
+            if (foundNode) {
+              console.log(`Found node with deep search for ${path}`);
+              return foundNode;
+            }
+          }
+        }
+      }
+
+      return null;
+    };
+
+    // Helper function to search deeply for a node by name
+    const findDeepNodeByName = (node: any, name: string): any => {
+      if (node.name === name) {
+        return node;
+      }
+
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findDeepNodeByName(child, name);
+          if (found) {
+            return found;
+          }
+        }
+      }
+
+      return null;
+    };
+
+    // Try to find the target node
+    const targetNode = findNodeByPath(updatedData, folderPath);
+
+    if (targetNode) {
+      console.log(`Found target node: ${targetNode.name} with ${targetNode.children ? targetNode.children.length : 0} existing children`);
+      if (newContents && newContents.children) {
+        // Replace the node's children
+        targetNode.children = newContents.children;
+        console.log(`Updated children array with ${newContents.children.length} items`);
+      } else {
+        console.error('newContents is missing children array');
+      }
+    } else {
+      console.error(`Failed to find folder node at path: ${folderPath}`);
+      // Log the first level of the tree structure to help debug
+      if (updatedData.children) {
+        console.log('First level children in tree:');
+        updatedData.children.forEach((child: any, index: number) => {
+          console.log(`  ${index}: ${child.name}`);
+        });
+      }
+    }
+
+    // Replace the original data with the updated version regardless of whether we found the node
+    this.originalTreeData = updatedData;
+    console.log('updateFolderContentsInTreemap - completed, originalTreeData updated');
+  }
+
   formatSize(bytes: number): string {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -472,6 +923,12 @@ Status: %{customdata.included}<br>
   }
 
   viewFileContent(file: FileInfo) {
+    // Don't allow file viewing in timeout state
+    if (this.timeoutOccurred) {
+      this.notificationService.warning('File content cannot be viewed in timeout state');
+      return;
+    }
+
     this.selectedFile = file;
     this.fileContent = null;
     this.fileContentError = null;
@@ -500,12 +957,14 @@ Status: %{customdata.included}<br>
     this.fileContentError = null;
   }
 
-  onShowOnlyIncludedChange() {
-    this.updateTreemap();
-  }
-
   handleNodeAction(action: string) {
     if (!this.selectedNode) return;
+
+    // Disable actions in timeout state
+    if (this.timeoutOccurred && action !== 'copy') {
+      this.notificationService.warning('Cannot perform this action in timeout state');
+      return;
+    }
 
     // Remove the "root/" prefix if it exists
     const path = this.selectedNode.path.replace(/^root\//, '');
@@ -543,6 +1002,10 @@ Status: %{customdata.included}<br>
         });
         break;
 
+      case 'hideFolder':
+        this.hideSelectedFolder();
+        break;
+
       case 'clear':
         this.clearSelection();
         break;
@@ -553,8 +1016,6 @@ Status: %{customdata.included}<br>
     this.fileDataService.updateConfigIncrementally(config)
       .subscribe({
         next: (response) => {
-          // Instead of refreshing cache here, emit up to parent
-          this.reloadRequired.emit();
         },
         error: (error) => {
           console.error('Error updating configuration:', error);
@@ -563,6 +1024,12 @@ Status: %{customdata.included}<br>
   }
 
   onFilesDropped(files: DroppedFile[]): void {
+    // Disable file drop in timeout state
+    if (this.timeoutOccurred) {
+      this.notificationService.warning('Cannot process files in timeout state');
+      return;
+    }
+
     if (!files.length) return;
 
     this.notificationService.info(`Processing ${files.length} file(s)...`);
@@ -624,10 +1091,5 @@ Status: %{customdata.included}<br>
         });
       }, index * 200); // Stagger updates to avoid race conditions
     });
-
-    // After all paths are added, trigger a reload
-    setTimeout(() => {
-      this.reloadRequired.emit();
-    }, pathsToAdd.length * 200 + 300);
   }
 }
